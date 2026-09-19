@@ -2,6 +2,9 @@ mod buchi;
 
 pub use buchi::*;
 
+mod co_buchi;
+pub use co_buchi::*;
+
 mod parity;
 pub use parity::*;
 

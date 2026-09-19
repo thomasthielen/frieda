@@ -1,7 +1,7 @@
 use std::hash::Hash;
 
 use super::{DefaultIdType, ForAlphabet, IntoEdgeTuple, Sproutable};
-use crate::automaton::{DBA, DFA, DPA, MealyMachine, MooreMachine, WithInitial};
+use crate::automaton::{DBA, DCW, DFA, DPA, MealyMachine, MooreMachine, WithInitial};
 use crate::core::{Color, Int, Void, alphabet::CharAlphabet, math::OrderedSet};
 use crate::representation::IntoTs;
 use crate::{DTS, NTS, RightCongruence, TS, TransitionSystem};
@@ -279,6 +279,14 @@ impl TSBuilder<Void, bool, true> {
             .into_dts()
             .with_initial(initial)
             .into_dba()
+    }
+
+    /// Attempts to turn `self` into a deterministic co-Büchi automaton. Panics if `self` is not deterministic.
+    pub fn into_dcw(self, initial: DefaultIdType) -> DCW<CharAlphabet> {
+        self.default_color(Void)
+            .into_dts()
+            .with_initial(initial)
+            .into_dcw()
     }
 }
 

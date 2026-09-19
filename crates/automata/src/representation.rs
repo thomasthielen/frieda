@@ -2,7 +2,7 @@
 
 use crate::core::{Color, Int, Void, math};
 
-use crate::automaton::{DBA, DFA, DPA, MealyMachine, MooreMachine};
+use crate::automaton::{DBA, DCW, DFA, DPA, MealyMachine, MooreMachine};
 use crate::ts::{
     DefaultIdType, Deterministic, EdgeColor, ForAlphabet, IsEdge, Sproutable, StateColor,
     StateIndex,
@@ -115,6 +115,13 @@ pub trait CollectTs: TransitionSystem {
     {
         let (ts, initial) = self.erase_state_colors().collect_dts_and_initial();
         DBA::from_parts(ts, initial)
+    }
+    fn collect_dcw(&self) -> DCW<Self::Alphabet>
+    where
+        Self: Pointed<EdgeColor = bool>,
+    {
+        let (ts, initial) = self.erase_state_colors().collect_dts_and_initial();
+        DCW::from_parts(ts, initial)
     }
     fn collect_dpa(&self) -> DPA<Self::Alphabet>
     where
@@ -266,6 +273,27 @@ pub trait IntoTs: TransitionSystem {
     {
         let initial = self.initial();
         self.into_dba_with_initial(initial)
+    }
+
+    /// Collects the transition system representing `self` and builds a new [`DCW`].
+    fn into_dcw_with_initial(self, initial: StateIndex<Self>) -> DCW<Self::Alphabet>
+    where
+        Self: Deterministic<EdgeColor = bool>,
+    {
+        let (ts, initial) = self
+            .with_initial(initial)
+            .erase_state_colors()
+            .into_dts_and_initial();
+        DCW::from_parts(ts, initial)
+    }
+
+    /// Collects the transition system representing `self` and builds a new [`DCW`].
+    fn into_dcw(self) -> DCW<Self::Alphabet>
+    where
+        Self: Congruence<EdgeColor = bool>,
+    {
+        let initial = self.initial();
+        self.into_dcw_with_initial(initial)
     }
 
     /// Creates a new instance of a [`RightCongruence`] from the transition structure of `self`.
