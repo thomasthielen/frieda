@@ -3,7 +3,7 @@
 use std::fmt::{Debug, Display};
 use thiserror::Error;
 
-use crate::automaton::{DFA, IntoDPA, IntoMealyMachine, IntoMooreMachine};
+use crate::automaton::{DFA, IntoDCW, IntoDPA, IntoMealyMachine, IntoMooreMachine};
 use crate::core::{Color, Int, Show, alphabet::Alphabet};
 use crate::ts::{Deterministic, IsEdge, StateColor, StateIndex};
 use crate::{Pointed, TransitionSystem};
@@ -92,6 +92,17 @@ pub trait Dottable: TransitionSystem {
             )
         });
 
+        // marks the initial state through an arrow coming from a point-shaped dummy node
+        let initial = self.dot_initial_state().into_iter().flat_map(|q| {
+            [
+                format!("{DOT_INITIAL_IDENT} [shape=\"point\", label=\"\"]"),
+                format!(
+                    "{DOT_INITIAL_IDENT} -> {}",
+                    sanitize_dot_ident(&self.dot_state_ident(q))
+                ),
+            ]
+        });
+
         let transitions = self.state_indices().flat_map(|q| {
             self.edges_from(q)
                 .expect("edges_from may not return none for state that exists")
@@ -110,6 +121,7 @@ pub trait Dottable: TransitionSystem {
 
         let mut lines = header
             .chain(states)
+            .chain(initial)
             .chain(transitions)
             .chain(std::iter::once("}".to_string()));
         lines.join("\n")
@@ -120,6 +132,12 @@ pub trait Dottable: TransitionSystem {
     }
 
     fn dot_name(&self) -> Option<String>;
+
+    /// The state to mark as initial, if any. If this returns `Some`, an arrow
+    /// pointing to that state is drawn. By default, no state is marked.
+    fn dot_initial_state(&self) -> Option<Self::StateIndex> {
+        None
+    }
 
     fn dot_transition_attributes<'a>(
         &'a self,
@@ -432,6 +450,44 @@ where
     }
 }
 
+/// Covers both [`DCW`](crate::automaton::DCW) and [`NCW`](crate::automaton::NCW), as they only
+/// differ in their backing transition system.
+impl<D> Dottable for IntoDCW<D>
+where
+    D: TransitionSystem<EdgeColor = bool>,
+{
+    fn dot_name(&self) -> Option<String> {
+        Some("CoBuchi".into())
+    }
+
+    fn dot_initial_state(&self) -> Option<Self::StateIndex> {
+        Some(self.initial())
+    }
+
+    fn dot_state_attributes(
+        &self,
+        idx: Self::StateIndex,
+    ) -> impl IntoIterator<Item = DotStateAttribute> {
+        vec![DotStateAttribute::Label(self.dot_state_ident(idx))]
+    }
+
+    fn dot_transition_attributes<'a>(
+        &'a self,
+        t: Self::EdgeRef<'a>,
+    ) -> impl IntoIterator<Item = DotTransitionAttribute> {
+        // rejecting (`true`) edges are dashed, non-rejecting (`false`) edges are solid
+        let style = if IsEdge::color(&t) { "dashed" } else { "solid" };
+        vec![
+            DotTransitionAttribute::Label(t.expression().show()),
+            DotTransitionAttribute::Style(style.into()),
+        ]
+    }
+
+    fn dot_state_ident(&self, idx: Self::StateIndex) -> String {
+        format!("q{idx:?}")
+    }
+}
+
 /// Enum that abstracts attributes in the DOT format.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum DotStateAttribute {
@@ -459,13 +515,17 @@ impl Display for DotStateAttribute {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum DotTransitionAttribute {
+    /// The label of an edge
     Label(String),
+    /// The line style of an edge, e.g. `dashed`, `dotted` or `bold`
+    Style(String),
 }
 
 impl Display for DotTransitionAttribute {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DotTransitionAttribute::Label(lbl) => write!(f, "label=\"{lbl}\""),
+            DotTransitionAttribute::Style(style) => write!(f, "style=\"{style}\""),
         }
     }
 }
@@ -510,6 +570,9 @@ fn display_png(contents: Vec<u8>) -> Result<(), RenderError> {
     Ok(())
 }
 
+/// Identifier of the dummy node the arrow into the initial state originates from.
+const DOT_INITIAL_IDENT: &str = "__init";
+
 fn sanitize_dot_ident(name: &str) -> String {
     name.chars()
         .filter_map(|chr| match chr {
@@ -533,6 +596,21 @@ mod tests {
     use crate::DTS;
     use crate::core::Void;
     use crate::ts::TSBuilder;
+
+    #[test]
+    fn dcw_marks_initial_state() {
+        let dcw = TSBuilder::without_state_colors()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (1, 'a', false, 1),
+                (1, 'b', true, 0),
+            ])
+            .into_dcw(1);
+        let dot = dcw.dot_representation();
+        assert!(dot.contains("__init -> q1"), "{dot}");
+        assert!(!dot.contains("__init -> q0"), "{dot}");
+    }
 
     #[test_log::test]
     #[cfg(feature = "render")]
