@@ -49,6 +49,10 @@ bit-set = "0.6"
 clap = { version = "4.5", optional = true }
 rand_distr = { version = "0.4.3", optional = true }
 
+[[example]]
+name = "render_graphs"
+required-features = ["graphviz"]
+
 [features]
 default = ["hoa", "random", "render"]
 random = ["dep:rand_distr"]
