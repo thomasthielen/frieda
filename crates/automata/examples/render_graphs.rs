@@ -3,7 +3,7 @@
 //! Run with: cargo run --example render_graphs -p automata --features graphviz
 
 use automata::TransitionSystem;
-use automata::automaton::NCW;
+use automata::automaton::{DCW,NCW};
 use automata::core::Void;
 use automata::dot::Dottable;
 use automata::hoa::{HoaString, input::pop_omega_automaton};
@@ -25,15 +25,26 @@ fn main() {
 
     let (det_aut, _) = pop_omega_automaton::<true>(HoaString::from(det1.to_string()))
         .expect("failed to parse det1.hoa");
-    println!("parsed deterministic automaton with {} states", det_aut.ts().size());
-    
+    println!(
+        "parsed deterministic automaton with {} states",
+        det_aut.ts().size()
+    );
+
     let (nondet_aut, _) = pop_omega_automaton::<false>(HoaString::from(nondet1.to_string()))
         .expect("failed to parse nondet1.hoa");
-    println!("parsed nondeterministic automaton with {} states", nondet_aut.ts().size());
+    println!(
+        "parsed nondeterministic automaton with {} states",
+        nondet_aut.ts().size()
+    );
 
     // example automaton from RK22 - figure 1
     let nice_but_not_minimal = TSBuilder::without_state_colors()
-        .with_edges([(0, 'a', false, 0), (0, 'b', true, 1), (1, 'a', false, 1), (1, 'b', true, 0)])
+        .with_edges([
+            (0, 'a', false, 0),
+            (0, 'b', true, 1),
+            (1, 'a', false, 1),
+            (1, 'b', true, 0),
+        ])
         .into_dcw(0); // 0 is the initial state
     save_graph("nice_but_not_minimal", &nice_but_not_minimal);
 
@@ -47,10 +58,18 @@ fn main() {
     save_graph("ncw", &ncw_test);
 
     // example automaton from RK22 - figure 2
-    let safe_minimal_but_not_safe_centralized = TSBuilder::without_state_colors()
-        .with_edges([(0, 'a', false, 0), (0, 'b', false, 1), (0, 'c', true, 2)])
-        .with_edges([(1, 'c', false, 0), (1, 'a', true, 2), (1, 'b', true, 2)])
-        .with_edges([(2, 'c', true, 0), (2, 'b', true, 1), (2, 'a', false, 2)])
+    let safe_minimal_but_not_safe_centralized = DCW::builder()
+        .with_edges([
+            (0, 'a', false, 0),
+            (0, 'b', false, 1),
+            (0, 'c', true, 2),
+            (1, 'a', true, 2),
+            (1, 'b', true, 2),
+            (1, 'c', false, 0),
+            (2, 'a', false, 2),
+            (2, 'b', true, 1),
+            (2, 'c', true, 0),
+        ])
         .into_dcw(0);
     save_graph(
         "safe_minimal_but_not_safe_centralized",
