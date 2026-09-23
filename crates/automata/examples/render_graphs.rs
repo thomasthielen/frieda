@@ -3,7 +3,7 @@
 //! Run with: cargo run --example render_graphs -p automata --features graphviz
 
 use automata::TransitionSystem;
-use automata::automaton::{DCW,NCW};
+use automata::automaton::{DCW, NCW};
 use automata::core::Void;
 use automata::dot::Dottable;
 use automata::hoa::{HoaString, input::pop_omega_automaton};
@@ -47,6 +47,7 @@ fn main() {
         ])
         .into_dcw(0); // 0 is the initial state
     save_graph("nice_but_not_minimal", &nice_but_not_minimal);
+    assert!(nice_but_not_minimal.is_safe_deterministic());
 
     // nondeterministic: two `a`-successors from state 0
     let ncw_test = NCW::from_parts(
@@ -56,6 +57,7 @@ fn main() {
         0,
     );
     save_graph("ncw", &ncw_test);
+    assert!(ncw_test.is_safe_deterministic());
 
     // example automaton from RK22 - figure 2
     let safe_minimal_but_not_safe_centralized = DCW::builder()
@@ -75,4 +77,20 @@ fn main() {
         "safe_minimal_but_not_safe_centralized",
         &safe_minimal_but_not_safe_centralized,
     );
+
+    // example automaton from RK22 - figure 4
+    let safe_centralized_result = NCW::builder()
+        .with_edges([
+            (0, 'a', false, 0),
+            (0, 'b', false, 1),
+            (1, 'c', false, 0),
+            (0, 'c', true, 0),
+            (0, 'c', true, 1),
+            (1, 'a', true, 1),
+            (1, 'b', true, 1),
+            (1, 'a', true, 0),
+            (1, 'b', true, 0),
+        ])
+        .into_ncw(0);
+    assert!(safe_centralized_result.is_safe_deterministic());
 }
