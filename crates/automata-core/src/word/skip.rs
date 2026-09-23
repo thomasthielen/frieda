@@ -45,6 +45,7 @@ impl<W: FiniteWord> FiniteWord for Skip<'_, W> {
     }
 }
 
+#[allow(dead_code)]
 #[derive(Clone, PartialEq, Debug, Hash, Eq)]
 pub struct Rotated<W>(pub W, pub usize);
 
@@ -56,12 +57,14 @@ impl<W: FiniteWord> Word for Rotated<W> {
     }
 }
 
+#[allow(dead_code)]
 pub struct RotatedIter<'a, W> {
     rotated: &'a Rotated<W>,
     start: usize,
     position: usize,
 }
 
+#[allow(dead_code)]
 impl<'a, W> RotatedIter<'a, W> {
     pub fn new(rotated: &'a Rotated<W>, start: usize) -> Self {
         Self {

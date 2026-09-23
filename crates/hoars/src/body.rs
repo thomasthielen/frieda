@@ -7,6 +7,7 @@ use crate::{
     lexer::Token, value,
 };
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Alphabet(pub Vec<AtomicProposition>);
 
