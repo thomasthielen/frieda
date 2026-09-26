@@ -49,6 +49,8 @@ pub use congruence::{Class, Congruence, RightCongruence};
 /// Contains implementations different minimization algorithms.
 pub mod minimization;
 
+pub mod games;
+
 /// Implements the generation of random transition systems.
 #[cfg(feature = "random")]
 pub mod random;
