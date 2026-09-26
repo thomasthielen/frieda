@@ -1,7 +1,10 @@
 use crate::automaton::Semantics;
-use crate::core::{Color, alphabet::Alphabet};
+use crate::core::{
+    Color,
+    alphabet::{Alphabet, Expression},
+};
 use crate::games::{ParityGame, Player};
-use crate::ts::{Deterministic, StateColor};
+use crate::ts::{Deterministic, Shrinkable, Sproutable, StateColor};
 use crate::{Automaton, DTS, NTS, TransitionSystem, automaton::InfiniteWordAutomaton, ts::run};
 use automata_core::Void;
 use automata_core::alphabet::CharAlphabet;
@@ -233,12 +236,62 @@ where
                 .all(|targets| targets.iter().all(|&s| equivalent(targets[0], s)))
         })
     }
+
+    /// Semantically determinizes `self`, which is assumed to be a GFG-tNCW, by removing all
+    /// transitions that are not covering. Following \[RK22\], a transition `⟨q, σ, s⟩` is
+    /// *covering* if for every transition `⟨q, σ, s'⟩`, it holds that `L(A^s') ⊆ L(A^s)`.
+    ///
+    /// Since the transitions used by a strategy witnessing GFGness are covering \[KS15\], this
+    /// neither changes the language nor the GFGness of `self`, and afterwards all remaining
+    /// `σ`-successors of a state are equivalent, i.e. [`Self::is_semantically_deterministic`]
+    /// holds. Removing transitions also preserves safe determinism.
+    ///
+    /// Covering is decided with [`Self::gfg_containment_relation`], so this requires that all
+    /// states of `self` are GFG (which is why \[RK22, Theorem 2.2\] removes non-GFG states
+    /// first). Otherwise, containments might be missed and covering transitions removed.
+    ///
+    /// Edges whose expression matches several symbols are kept as they are if they are
+    /// covering for all of them, and are otherwise replaced by one edge for each symbol they
+    /// are covering for.
+    pub fn semantically_determinize(&mut self)
+    where
+        D: Shrinkable + Sproutable,
+    {
+        let contained = self.gfg_containment_relation();
+        let states: Vec<D::StateIndex> = self.state_indices().collect();
+        for q in states {
+            let mut successors: BTreeMap<_, BTreeSet<D::StateIndex>> = BTreeMap::new();
+            for (_, sym, _, target) in self.transitions_from(q) {
+                successors.entry(sym).or_default().insert(target);
+            }
+            let covering = |sym: &A::Symbol, s: D::StateIndex| {
+                successors[sym].iter().all(|&t| contained.contains(&(t, s)))
+            };
+
+            let edges = self
+                .remove_edges_from(q)
+                .expect("state was obtained from state_indices");
+            for (source, expression, color, target) in edges {
+                let symbols: Vec<A::Symbol> = expression.symbols().collect();
+                if symbols.iter().all(|sym| covering(sym, target)) {
+                    self.add_edge((source, expression, color, target));
+                    continue;
+                }
+                for sym in symbols.into_iter().filter(|sym| covering(sym, target)) {
+                    let expression = self.alphabet().make_expression(sym);
+                    self.add_edge((source, expression, color, target));
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DCW, NCW};
+    use crate::TransitionSystem;
     use crate::ts::TSBuilder;
+    use automata_core::alphabet::CharAlphabet;
     use automata_core::{Void, upw};
 
     #[test]
@@ -468,5 +521,129 @@ mod tests {
             ])
             .into_dcw(0);
         assert!(dcw.is_semantically_deterministic());
+    }
+
+    /// Returns the transitions of `ncw` as a sorted list, for comparing against expectations.
+    fn sorted_transitions<
+        T: TransitionSystem<StateIndex = u32, Alphabet = CharAlphabet, EdgeColor = bool>,
+    >(
+        ncw: &T,
+    ) -> Vec<(u32, char, bool, u32)> {
+        let mut transitions: Vec<_> = ncw
+            .state_indices()
+            .flat_map(|q| ncw.transitions_from(q).collect::<Vec<_>>())
+            .collect();
+        transitions.sort();
+        transitions
+    }
+
+    #[test]
+    fn semantically_determinize_removes_non_covering_transition() {
+        // same automaton as in `ncw_not_semantically_deterministic`: the `α`-transition
+        // `⟨0, a, 2⟩` leads to the empty state 2 and is not covering, as `L(1) ⊈ L(2)`
+        let mut ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (0, 'a', true, 2),
+                (0, 'b', false, 0),
+                (1, 'a', false, 1),
+                (1, 'b', false, 1),
+                (2, 'a', true, 2),
+                (2, 'b', true, 2),
+            ])
+            .into_ncw(0);
+        ncw.semantically_determinize();
+        assert_eq!(
+            sorted_transitions(&ncw),
+            vec![
+                (0, 'a', false, 1),
+                (0, 'b', false, 0),
+                (1, 'a', false, 1),
+                (1, 'b', false, 1),
+                (2, 'a', true, 2),
+                (2, 'b', true, 2),
+            ]
+        );
+        assert!(ncw.is_safe_deterministic());
+        assert!(ncw.is_semantically_deterministic());
+    }
+
+    #[test]
+    fn semantically_determinize_keeps_greatest_successor() {
+        // state 0 has three `a`-successors: 1 (finitely many `a`s), 2 (universal) and 3
+        // (empty). Only the transition to 2 is covering, as `L(3) ⊊ L(1) ⊊ L(2)`.
+        let mut ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', true, 1),
+                (0, 'a', true, 2),
+                (0, 'a', false, 3),
+                (0, 'b', false, 0),
+                (1, 'a', true, 1),
+                (1, 'b', false, 1),
+                (2, 'a', false, 2),
+                (2, 'b', false, 2),
+                (3, 'a', true, 3),
+                (3, 'b', true, 3),
+            ])
+            .into_ncw(0);
+        ncw.semantically_determinize();
+        let from_0: Vec<_> = ncw.transitions_from(0).collect();
+        assert_eq!(from_0.len(), 2);
+        assert!(from_0.contains(&(0, 'a', true, 2)));
+        assert!(from_0.contains(&(0, 'b', false, 0)));
+        assert!(ncw.is_semantically_deterministic());
+    }
+
+    #[test]
+    fn semantically_determinize_keeps_equivalent_successors() {
+        // `rk22_figure_4_is_semantically_deterministic` and
+        // `ncw_semantically_deterministic_with_structurally_different_successors`: all
+        // nondeterministic choices lead to equivalent states, so every transition is covering
+        let figure_4 = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', false, 1),
+                (1, 'c', false, 0),
+                (0, 'c', true, 0),
+                (0, 'c', true, 1),
+                (1, 'a', true, 1),
+                (1, 'b', true, 1),
+                (1, 'a', true, 0),
+                (1, 'b', true, 0),
+            ])
+            .into_ncw(0);
+        let structurally_different = NCW::builder()
+            .with_edges([
+                (0, 'a', true, 1),
+                (0, 'a', true, 2),
+                (0, 'b', false, 0),
+                (1, 'a', true, 1),
+                (1, 'b', false, 1),
+                (2, 'a', true, 3),
+                (2, 'b', false, 2),
+                (3, 'a', true, 2),
+                (3, 'b', false, 3),
+            ])
+            .into_ncw(0);
+        for ncw in [figure_4, structurally_different] {
+            let mut determinized = ncw.clone();
+            determinized.semantically_determinize();
+            assert_eq!(sorted_transitions(&determinized), sorted_transitions(&ncw));
+        }
+    }
+
+    #[test]
+    fn semantically_determinize_dcw_is_identity() {
+        let dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (1, 'a', false, 1),
+                (1, 'b', true, 0),
+            ])
+            .into_dcw(0);
+        let mut determinized = dcw.clone();
+        determinized.semantically_determinize();
+        assert_eq!(sorted_transitions(&determinized), sorted_transitions(&dcw));
     }
 }

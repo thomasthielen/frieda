@@ -93,4 +93,23 @@ fn main() {
         ])
         .into_ncw(0);
     assert!(safe_centralized_result.is_safe_deterministic());
+
+    // semantic determinization
+    let mut ncw = NCW::builder()
+        .with_edges([
+            (0, 'a', true, 1),
+            (0, 'a', true, 2),
+            (0, 'a', false, 3),
+            (0, 'b', false, 0),
+            (1, 'a', true, 1),
+            (1, 'b', false, 1),
+            (2, 'a', false, 2),
+            (2, 'b', false, 2),
+            (3, 'a', true, 3),
+            (3, 'b', true, 3),
+        ])
+        .into_ncw(0);
+    save_graph("ncw_test", &ncw);
+    ncw.semantically_determinize();
+    save_graph("ncw_test_semantically_determinized", &ncw);
 }
