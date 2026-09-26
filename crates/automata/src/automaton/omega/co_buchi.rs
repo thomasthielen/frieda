@@ -284,6 +284,24 @@ where
             }
         }
     }
+
+    /// Removes all states of `self` that are not reachable from the initial state, together with
+    /// all transitions leaving or entering them, and returns the removed states with their
+    /// colors. The indices of the remaining states are unchanged.
+    ///
+    /// Following \[RK22, Theorem 2.2\], this is the step after [`Self::semantically_determinize`]:
+    /// removing unreachable states affects neither the language nor the GFGness of `self`, since
+    /// no run from the initial state ever visits them. It also preserves the other properties
+    /// obtained so far: the languages of the remaining states only depend on states reachable
+    /// from them, which are all kept, so safe determinism, the GFGness of each state and
+    /// semantic determinism all carry over. Doing this after semantic determinization matters,
+    /// as removing non-covering transitions may make further states unreachable.
+    pub fn remove_unreachable_states(&mut self) -> Vec<(D::StateIndex, Q)>
+    where
+        D: Shrinkable,
+    {
+        self.trim()
+    }
 }
 
 #[cfg(test)]
@@ -645,5 +663,73 @@ mod tests {
         let mut determinized = dcw.clone();
         determinized.semantically_determinize();
         assert_eq!(sorted_transitions(&determinized), sorted_transitions(&dcw));
+    }
+
+    #[test]
+    fn remove_unreachable_states_after_semantic_determinization() {
+        // same automaton as in `semantically_determinize_removes_non_covering_transition`:
+        // removing the non-covering transition `⟨0, a, 2⟩` makes state 2 unreachable
+        let mut ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (0, 'a', true, 2),
+                (0, 'b', false, 0),
+                (1, 'a', false, 1),
+                (1, 'b', false, 1),
+                (2, 'a', true, 2),
+                (2, 'b', true, 2),
+            ])
+            .into_ncw(0);
+        assert!(ncw.remove_unreachable_states().is_empty());
+        ncw.semantically_determinize();
+        assert_eq!(ncw.remove_unreachable_states(), vec![(2, Void)]);
+        assert_eq!(
+            sorted_transitions(&ncw),
+            vec![
+                (0, 'a', false, 1),
+                (0, 'b', false, 0),
+                (1, 'a', false, 1),
+                (1, 'b', false, 1),
+            ]
+        );
+        assert!(ncw.is_safe_deterministic());
+        assert!(ncw.is_semantically_deterministic());
+    }
+
+    #[test]
+    fn remove_unreachable_states_removes_incoming_transitions() {
+        // states 2 and 3 are unreachable from 0, and the transitions `⟨2, a, 0⟩` and
+        // `⟨3, b, 1⟩` into reachable states must be removed along with them. State 1 is only
+        // reachable via an `α`-transition, and must be kept.
+        let mut ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 0),
+                (0, 'b', true, 1),
+                (1, 'a', false, 1),
+                (1, 'b', true, 0),
+                (2, 'a', false, 0),
+                (2, 'b', false, 3),
+                (3, 'a', true, 2),
+                (3, 'b', false, 1),
+            ])
+            .into_ncw(0);
+        let mut removed: Vec<u32> = ncw
+            .remove_unreachable_states()
+            .into_iter()
+            .map(|(q, _)| q)
+            .collect();
+        removed.sort();
+        assert_eq!(removed, vec![2, 3]);
+        assert_eq!(
+            sorted_transitions(&ncw),
+            vec![
+                (0, 'a', false, 0),
+                (0, 'b', true, 0),
+                (0, 'b', true, 1),
+                (1, 'a', false, 1),
+                (1, 'b', true, 0),
+            ]
+        );
     }
 }
