@@ -369,6 +369,85 @@ where
             }
         }
     }
+
+    /// Computes the safe language containment relation between the states of `self`, which is
+    /// assumed to be safe deterministic. The result contains the pair `(q, s)` iff
+    /// `L_safe(A^q) ⊆ L_safe(A^s)`. Following \[RK22\], the safe language `L_safe(A^q)` is the set
+    /// of infinite words that can be read from `q` without traversing an `α`-transition.
+    ///
+    /// Since `self` is safe deterministic, every state has at most one safe run on every word,
+    /// so this reduces to containment between deterministic safety automata \[RK22, Section
+    /// 3.2\]. First, the states with a nonempty safe language are computed as a greatest
+    /// fixpoint: these are the states with a safe transition to such a state. Then,
+    /// `L_safe(A^q) ⊈ L_safe(A^s)` iff there is a finite word `u` and a letter `σ` such that the
+    /// safe runs of `q` and `s` on `u` exist and end in states `p` and `r`, respectively, `p` has
+    /// a safe `σ`-transition to a state with a nonempty safe language, and `r` has no safe
+    /// `σ`-transition. The pairs for which this holds are computed as a least fixpoint,
+    /// simultaneously for all pairs of states.
+    pub fn safe_containment_relation(&self) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
+        debug_assert!(self.is_safe_deterministic());
+        let states: Vec<D::StateIndex> = self.state_indices().collect();
+
+        // safe_successors[q][σ] is the unique `σ`-successor of `q` via a safe transition
+        let safe_successors: BTreeMap<D::StateIndex, BTreeMap<A::Symbol, D::StateIndex>> = states
+            .iter()
+            .map(|&q| {
+                let successors = self
+                    .transitions_from(q)
+                    .filter(|&(_, _, color, _)| !color)
+                    .map(|(_, sym, _, target)| (sym, target))
+                    .collect();
+                (q, successors)
+            })
+            .collect();
+
+        // states with a nonempty safe language, i.e. with an infinite safe run
+        let mut live: BTreeSet<D::StateIndex> = states.iter().copied().collect();
+        loop {
+            let still_live: BTreeSet<D::StateIndex> = live
+                .iter()
+                .copied()
+                .filter(|q| safe_successors[q].values().any(|p| live.contains(p)))
+                .collect();
+            if still_live.len() == live.len() {
+                break;
+            }
+            live = still_live;
+        }
+
+        // pairs `(q, s)` with `L_safe(A^q) ⊈ L_safe(A^s)`
+        let mut not_contained = BTreeSet::new();
+        loop {
+            let mut changed = false;
+            for &q in &states {
+                for &s in &states {
+                    if not_contained.contains(&(q, s)) {
+                        continue;
+                    }
+                    let witnessed = safe_successors[&q]
+                        .iter()
+                        .filter(|(_, p)| live.contains(p))
+                        .any(|(sym, &p)| match safe_successors[&s].get(sym) {
+                            None => true,
+                            Some(&r) => not_contained.contains(&(p, r)),
+                        });
+                    if witnessed {
+                        not_contained.insert((q, s));
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+
+        states
+            .iter()
+            .flat_map(|&q| states.iter().map(move |&s| (q, s)))
+            .filter(|pair| !not_contained.contains(pair))
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -923,5 +1002,76 @@ mod tests {
                 (1, 'b', false, 1),
             ]
         );
+    }
+
+    #[test]
+    fn rk22_figure_2_safe_containment() {
+        // RK22, Example 3.1: the safe languages are `L_safe(q0) = (a + bc)^ω`,
+        // `L_safe(q1) = c · L_safe(q0)` and `L_safe(q2) = a^ω`, so apart from the reflexive
+        // pairs, only `L_safe(q2) ⊆ L_safe(q0)` holds
+        let dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', false, 1),
+                (0, 'c', true, 2),
+                (1, 'a', true, 2),
+                (1, 'b', true, 2),
+                (1, 'c', false, 0),
+                (2, 'a', false, 2),
+                (2, 'b', true, 1),
+                (2, 'c', true, 0),
+            ])
+            .into_dcw(0);
+        let contained = dcw.safe_containment_relation();
+        assert_eq!(
+            contained.into_iter().collect::<Vec<_>>(),
+            vec![(0, 0), (1, 1), (2, 0), (2, 2)]
+        );
+    }
+
+    #[test]
+    fn safe_containment_with_empty_safe_languages() {
+        // state 0 has a safe transition, but only into state 1, which has no safe transitions
+        // at all, so both have an empty safe language and are contained in every state. State 2
+        // has the safe language `a^ω`, which is not contained in the empty ones.
+        let ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (1, 'a', true, 1),
+                (1, 'a', true, 2),
+                (2, 'a', false, 2),
+            ])
+            .into_ncw(0);
+        let contained = ncw.safe_containment_relation();
+        for s in 0..3 {
+            assert!(contained.contains(&(0, s)));
+            assert!(contained.contains(&(1, s)));
+        }
+        assert!(contained.contains(&(2, 2)));
+        assert!(!contained.contains(&(2, 0)));
+        assert!(!contained.contains(&(2, 1)));
+    }
+
+    #[test]
+    fn safe_containment_follows_runs_beyond_first_letter() {
+        // both 0 and 2 can read `a` safely, but after that, 0 can read `b` safely forever while
+        // 2 can only read `c`: the difference is only witnessed after the first letter
+        let ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (1, 'b', false, 1),
+                (1, 'c', false, 1),
+                (1, 'a', true, 0),
+                (2, 'a', false, 3),
+                (3, 'c', false, 3),
+                (3, 'a', true, 2),
+                (3, 'b', true, 2),
+            ])
+            .into_ncw(0);
+        let contained = ncw.safe_containment_relation();
+        assert!(contained.contains(&(2, 0)));
+        assert!(!contained.contains(&(0, 2)));
+        assert!(contained.contains(&(3, 1)));
+        assert!(!contained.contains(&(1, 3)));
     }
 }
