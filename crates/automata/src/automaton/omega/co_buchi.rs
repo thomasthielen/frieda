@@ -55,6 +55,20 @@ pub type NCW<A = CharAlphabet, Q = Void, D = NTS<A, Q, bool>> =
 /// Helper trait for creating an [`NCW`] from a given transition system.
 pub type IntoNCW<T> = NCW<<T as TransitionSystem>::Alphabet, StateColor<T>, T>;
 
+impl<A: Alphabet, Q: Color> DCW<A, Q> {
+    /// Turns `self` into an [`NCW`] with the same states, transitions and initial state. The
+    /// backing transition system is only reinterpreted as nondeterministic, so no state indices
+    /// change.
+    ///
+    /// This is needed before applying transformations that may introduce nondeterminism, such as
+    /// [`NCW::safe_centralize`], which the deterministic transition system backing a [`DCW`]
+    /// cannot represent.
+    pub fn into_ncw(self) -> NCW<A, Q> {
+        let (ts, initial, acceptance) = self.into_parts();
+        NCW::from_parts_with_acceptance(ts.into_nondeterministic(), initial, acceptance)
+    }
+}
+
 /// This impl applies to both [`DCW`] and [`NCW`], as they are both instantiations of
 /// [`Automaton`] with a [`CoBuchiCondition`] and `bool`-colored transitions, differing
 /// only in the (default) type of the backing transition system.
@@ -489,7 +503,10 @@ where
         // the smallest state of every safe component, used to pick a representative
         let mut smallest: BTreeMap<usize, D::StateIndex> = BTreeMap::new();
         for (&q, &c) in &component {
-            smallest.entry(c).and_modify(|s| *s = (*s).min(q)).or_insert(q);
+            smallest
+                .entry(c)
+                .and_modify(|s| *s = (*s).min(q))
+                .or_insert(q);
         }
 
         let in_frontier = |c: usize| {
@@ -505,13 +522,117 @@ where
             .map(|(q, _)| q)
             .collect()
     }
+
+    /// Safe-centralizes `self`, which is assumed to be a nice GFG-tNCW, by turning it into the
+    /// tNCW `B_S` of \[RK22, Section 3.2\] for a frontier `S`, in which the smallest state of
+    /// each ergodic SCC of `H` determines the component that is taken (see
+    /// [`Self::subsafe_equivalence_relation`] for the relation `≤` that `H` is based on).
+    /// Afterwards, `self` is a nice, safe-centralized and
+    /// `α`-homogenous GFG-tNCW equivalent to the original one \[RK22, Theorem 3.15\].
+    ///
+    /// `B_S` keeps exactly the states in the safe components of `S`, and for each such state `q`
+    /// and letter `σ`:
+    /// - if `q` has a safe `σ`-transition, it is kept and all `σ`-labeled `α`-transitions of `q`
+    ///   are removed,
+    /// - otherwise, `q` gets an `σ`-labeled `α`-transition to every kept state that is
+    ///   equivalent to some `σ`-successor of `q`.
+    ///
+    /// Hence, for every `q` and `σ`, the `σ`-transitions of `q` are either all safe or all
+    /// `α`-transitions, i.e. `B_S` is `α`-homogenous. As `self` is normal, safe transitions stay
+    /// within their safe component, so no safe transition leads to a removed state. The initial
+    /// state is kept if it is in `S`, and is otherwise replaced by the smallest kept state `q'`
+    /// with `q_0 ≤ q'`, which exists by \[RK22, Lemma 3.8\]. The indices of all kept states are
+    /// unchanged.
+    ///
+    /// # Panics
+    /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]), or if `B_S` is
+    /// nondeterministic but the transition system backing `self` is deterministic, as is the case
+    /// for a [`DCW`]. Note that even for a deterministic `self`, `B_S` may be nondeterministic.
+    pub fn safe_centralize(&mut self)
+    where
+        D: Shrinkable + Sproutable,
+    {
+        assert!(
+            self.is_safe_deterministic(),
+            "safe centralization requires a safe deterministic tNCW"
+        );
+        let contained = self.gfg_containment_relation();
+        let equivalent = |q, s| contained.contains(&(q, s)) && contained.contains(&(s, q));
+        // as in `Self::subsafe_equivalence_relation`, but reusing `contained`
+        let subsafe: BTreeSet<_> = self
+            .safe_containment_relation()
+            .into_iter()
+            .filter(|&(q, s)| equivalent(q, s))
+            .collect();
+        let kept = self.frontier_states(&subsafe);
+
+        if !kept.contains(&self.initial) {
+            let initial = self.initial;
+            self.initial = kept
+                .iter()
+                .copied()
+                .find(|&q| subsafe.contains(&(initial, q)))
+                .expect(
+                    "the initial state is subsafe-equivalent to a frontier state [RK22, Lemma 3.8]",
+                );
+        }
+
+        for &q in &kept {
+            let edges = self
+                .remove_edges_from(q)
+                .expect("state was obtained from state_indices");
+            let safe_symbols: BTreeSet<A::Symbol> = edges
+                .iter()
+                .filter(|&(_, _, color, _)| !color)
+                .flat_map(|(_, expression, _, _)| expression.symbols())
+                .collect();
+
+            let mut centralized = BTreeSet::new();
+            for (source, expression, color, target) in edges {
+                if !color {
+                    debug_assert!(
+                        kept.contains(&target),
+                        "safe transition leaves its component"
+                    );
+                    centralized.insert((source, expression, color, target));
+                    continue;
+                }
+                for sym in expression
+                    .symbols()
+                    .filter(|sym| !safe_symbols.contains(sym))
+                {
+                    for &p in kept.iter().filter(|&&p| equivalent(target, p)) {
+                        let expression = self.alphabet().make_expression(sym);
+                        centralized.insert((source, expression, true, p));
+                    }
+                }
+            }
+
+            let expected = centralized.len();
+            for edge in centralized {
+                self.add_edge(edge);
+            }
+            assert_eq!(
+                self.edges_from(q).expect("state is kept").count(),
+                expected,
+                "safe centralization introduces nondeterminism, which the deterministic transition \
+                 system backing this automaton cannot represent"
+            );
+        }
+
+        let removed: Vec<D::StateIndex> =
+            self.state_indices().filter(|q| !kept.contains(q)).collect();
+        for q in removed {
+            self.remove_state(q);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{DCW, NCW};
-    use crate::TransitionSystem;
     use crate::ts::TSBuilder;
+    use crate::{Pointed, TransitionSystem};
     use automata_core::alphabet::CharAlphabet;
     use automata_core::{Void, upw};
 
@@ -1134,20 +1255,20 @@ mod tests {
 
     /// RK22, Figure 2: a nice tDCW whose states are all equivalent, but differ in their safe
     /// languages. Its safe components are `{q0, q1}` and `{q2}`.
+    const RK22_FIGURE_2: [(u32, char, bool, u32); 9] = [
+        (0, 'a', false, 0),
+        (0, 'b', false, 1),
+        (0, 'c', true, 2),
+        (1, 'a', true, 2),
+        (1, 'b', true, 2),
+        (1, 'c', false, 0),
+        (2, 'a', false, 2),
+        (2, 'b', true, 1),
+        (2, 'c', true, 0),
+    ];
+
     fn rk22_figure_2() -> DCW {
-        DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', false, 1),
-                (0, 'c', true, 2),
-                (1, 'a', true, 2),
-                (1, 'b', true, 2),
-                (1, 'c', false, 0),
-                (2, 'a', false, 2),
-                (2, 'b', true, 1),
-                (2, 'c', true, 0),
-            ])
-            .into_dcw(0)
+        DCW::builder().with_edges(RK22_FIGURE_2).into_dcw(0)
     }
 
     #[test]
@@ -1161,7 +1282,9 @@ mod tests {
             vec![(0, 0), (1, 1), (2, 0), (2, 2)]
         );
         assert_eq!(
-            dcw.frontier_states(&subsafe).into_iter().collect::<Vec<_>>(),
+            dcw.frontier_states(&subsafe)
+                .into_iter()
+                .collect::<Vec<_>>(),
             vec![0, 1]
         );
     }
@@ -1183,7 +1306,9 @@ mod tests {
         let subsafe = dcw.subsafe_equivalence_relation();
         assert_eq!(subsafe.len(), 4);
         assert_eq!(
-            dcw.frontier_states(&subsafe).into_iter().collect::<Vec<_>>(),
+            dcw.frontier_states(&subsafe)
+                .into_iter()
+                .collect::<Vec<_>>(),
             vec![0]
         );
     }
@@ -1207,8 +1332,124 @@ mod tests {
             vec![(0, 0), (1, 1)]
         );
         assert_eq!(
-            dcw.frontier_states(&subsafe).into_iter().collect::<Vec<_>>(),
+            dcw.frontier_states(&subsafe)
+                .into_iter()
+                .collect::<Vec<_>>(),
             vec![0, 1]
         );
+
+        // hence, safe centralization changes nothing
+        let mut centralized = dcw.clone();
+        centralized.safe_centralize();
+        assert_eq!(sorted_transitions(&centralized), sorted_transitions(&dcw));
+    }
+
+    /// The tNCW `B_S` for `S = {{q0, q1}}` of RK22, Figure 4, obtained from Figure 2.
+    const RK22_FIGURE_4: [(u32, char, bool, u32); 9] = [
+        (0, 'a', false, 0),
+        (0, 'b', false, 1),
+        (0, 'c', true, 0),
+        (0, 'c', true, 1),
+        (1, 'a', true, 0),
+        (1, 'a', true, 1),
+        (1, 'b', true, 0),
+        (1, 'b', true, 1),
+        (1, 'c', false, 0),
+    ];
+
+    #[test]
+    fn rk22_figure_2_safe_centralizes_to_figure_4() {
+        // RK22, Example 3.10: the state q2 is removed, and every `α`-transition of q0 and q1
+        // that is not overruled by a safe transition on the same letter is redirected to both
+        // q0 and q1, as all states are equivalent
+        let mut ncw = NCW::builder().with_edges(RK22_FIGURE_2).into_ncw(0);
+        ncw.safe_centralize();
+        assert_eq!(ncw.initial(), 0);
+        assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert!(ncw.is_safe_deterministic());
+        assert!(ncw.is_semantically_deterministic());
+        assert!(ncw.is_normal());
+    }
+
+    #[test]
+    fn safe_centralize_moves_initial_state_out_of_removed_component() {
+        // same as `rk22_figure_2_safe_centralizes_to_figure_4`, but starting in q2, which is
+        // removed. As `q2 ≤ q0` but not `q2 ≤ q1`, the new initial state is q0.
+        let mut ncw = NCW::builder().with_edges(RK22_FIGURE_2).into_ncw(2);
+        ncw.safe_centralize();
+        assert_eq!(ncw.initial(), 0);
+        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+    }
+
+    #[test]
+    fn rk22_figure_1_safe_centralizes_to_single_state() {
+        // RK22, Figure 1: only the safe component {q0} is kept, and the `α`-transition on `b` is
+        // redirected to q0 itself. The result is deterministic, so a `DCW` can represent it.
+        let mut dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (1, 'a', false, 1),
+                (1, 'b', true, 0),
+            ])
+            .into_dcw(1);
+        let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
+        let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
+
+        dcw.safe_centralize();
+        assert_eq!(dcw.initial(), 0);
+        assert_eq!(
+            sorted_transitions(&dcw),
+            vec![(0, 'a', false, 0), (0, 'b', true, 0)]
+        );
+        let accepted_after: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
+        assert_eq!(accepted, accepted_after);
+        assert_eq!(accepted, vec![true, false, true, false]);
+    }
+
+    #[test]
+    fn dcw_into_ncw_keeps_states_transitions_and_initial_state() {
+        let dcw = DCW::builder().with_edges(RK22_FIGURE_2).into_dcw(2);
+        let ncw = dcw.clone().into_ncw();
+        assert_eq!(ncw.initial(), 2);
+        assert_eq!(
+            ncw.state_indices().collect::<Vec<_>>(),
+            dcw.state_indices().collect::<Vec<_>>()
+        );
+        assert_eq!(sorted_transitions(&ncw), sorted_transitions(&dcw));
+    }
+
+    #[test]
+    fn rk22_figure_2_as_dcw_safe_centralizes_after_into_ncw() {
+        // unlike in `safe_centralize_panics_if_dcw_cannot_represent_result`, converting the `DCW`
+        // first allows the nondeterministic `α`-transitions of Figure 4
+        let mut ncw = rk22_figure_2().into_ncw();
+        ncw.safe_centralize();
+        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+    }
+
+    #[test]
+    #[should_panic(expected = "deterministic transition system")]
+    fn safe_centralize_panics_if_dcw_cannot_represent_result() {
+        // RK22, Figure 2 as a `DCW`: `B_S` has two `c`-transitions from q0, which the
+        // deterministic backing transition system cannot represent
+        let mut dcw = rk22_figure_2();
+        dcw.safe_centralize();
+    }
+
+    #[test]
+    #[should_panic(expected = "safe deterministic")]
+    fn safe_centralize_panics_if_not_safe_deterministic() {
+        // same automaton as in `ncw_not_safe_deterministic_with_two_safe_transitions`
+        let mut ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (0, 'a', false, 2),
+                (1, 'a', false, 1),
+                (2, 'a', false, 2),
+            ])
+            .into_ncw(0);
+        ncw.safe_centralize();
     }
 }
