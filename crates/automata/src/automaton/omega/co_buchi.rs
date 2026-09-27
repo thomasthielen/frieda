@@ -448,6 +448,63 @@ where
             .filter(|pair| !not_contained.contains(pair))
             .collect()
     }
+
+    /// Computes the subsafe-equivalence relation between the states of `self`, which is assumed
+    /// to be a nice GFG-tNCW. Following \[RK22\], `q` is subsafe-equivalent to `s`, denoted
+    /// `q ≤ s`, if `L(A^q) = L(A^s)` and `L_safe(A^q) ⊆ L_safe(A^s)`. The result contains the pair
+    /// `(q, s)` iff `q ≤ s`.
+    ///
+    /// Language equivalence is decided with [`Self::gfg_containment_relation`] and safe language
+    /// containment with [`Self::safe_containment_relation`], so the same assumptions apply.
+    pub fn subsafe_equivalence_relation(&self) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
+        let contained = self.gfg_containment_relation();
+        self.safe_containment_relation()
+            .into_iter()
+            .filter(|&(q, s)| contained.contains(&(q, s)) && contained.contains(&(s, q)))
+            .collect()
+    }
+
+    /// Returns the states of a frontier of `self`, which is assumed to be a nice GFG-tNCW, given
+    /// its subsafe-equivalence relation `subsafe` (see [`Self::subsafe_equivalence_relation`]).
+    ///
+    /// Following \[RK22, Section 3.2\], the relation `H` on the safe components of `self` contains
+    /// `(S, S')` iff there are states `q ∈ S` and `q' ∈ S'` with `q ≤ q'`. A frontier is a set of
+    /// safe components such that every safe component `S` has some `S'` in the frontier with
+    /// `H(S, S')`, and no two different components in the frontier are related by `H`. Since `H`
+    /// is reflexive and transitive \[RK22, Lemma 3.9\], a frontier is obtained by taking one
+    /// component from each ergodic SCC of the graph induced by `H`, and a component `S` lies in
+    /// such an SCC iff `H(S, S')` implies `H(S', S)` for all `S'`. Among the components of an
+    /// ergodic SCC, the one containing the smallest state is taken, so the result does not
+    /// depend on the order in which the safe components are computed.
+    fn frontier_states(
+        &self,
+        subsafe: &BTreeSet<(D::StateIndex, D::StateIndex)>,
+    ) -> BTreeSet<D::StateIndex> {
+        let component = self.safe_component_indices();
+        let h: BTreeSet<(usize, usize)> = subsafe
+            .iter()
+            .map(|(q, s)| (component[q], component[s]))
+            .collect();
+
+        // the smallest state of every safe component, used to pick a representative
+        let mut smallest: BTreeMap<usize, D::StateIndex> = BTreeMap::new();
+        for (&q, &c) in &component {
+            smallest.entry(c).and_modify(|s| *s = (*s).min(q)).or_insert(q);
+        }
+
+        let in_frontier = |c: usize| {
+            let related = || h.iter().filter(move |&&(s, _)| s == c).map(|&(_, t)| t);
+            // `c` lies in an ergodic SCC of `H` ...
+            related().all(|t| h.contains(&(t, c)))
+                // ... and is its representative
+                && related().all(|t| smallest[&c] <= smallest[&t])
+        };
+        component
+            .into_iter()
+            .filter(|&(_, c)| in_frontier(c))
+            .map(|(q, _)| q)
+            .collect()
+    }
 }
 
 #[cfg(test)]
@@ -1073,5 +1130,85 @@ mod tests {
         assert!(!contained.contains(&(0, 2)));
         assert!(contained.contains(&(3, 1)));
         assert!(!contained.contains(&(1, 3)));
+    }
+
+    /// RK22, Figure 2: a nice tDCW whose states are all equivalent, but differ in their safe
+    /// languages. Its safe components are `{q0, q1}` and `{q2}`.
+    fn rk22_figure_2() -> DCW {
+        DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', false, 1),
+                (0, 'c', true, 2),
+                (1, 'a', true, 2),
+                (1, 'b', true, 2),
+                (1, 'c', false, 0),
+                (2, 'a', false, 2),
+                (2, 'b', true, 1),
+                (2, 'c', true, 0),
+            ])
+            .into_dcw(0)
+    }
+
+    #[test]
+    fn rk22_figure_2_frontier() {
+        // RK22, Example 3.10: as all states are equivalent and `L_safe(q2) ⊆ L_safe(q0)`, we have
+        // `q2 ≤ q0`, so `H({q2}, {q0, q1})` and the single frontier is `{{q0, q1}}`
+        let dcw = rk22_figure_2();
+        let subsafe = dcw.subsafe_equivalence_relation();
+        assert_eq!(
+            subsafe.iter().copied().collect::<Vec<_>>(),
+            vec![(0, 0), (1, 1), (2, 0), (2, 2)]
+        );
+        assert_eq!(
+            dcw.frontier_states(&subsafe).into_iter().collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+    }
+
+    #[test]
+    fn rk22_figure_1_frontier_picks_one_of_strongly_equivalent_components() {
+        // RK22, Figure 1: the tDCW `A_fm` for "finitely many `b`s". Both states are
+        // strongly-equivalent (safe language `a^ω`), but lie in different safe components
+        // `{q0}` and `{q1}`, which are hence related by `H` in both directions. Only one of them
+        // may be in the frontier, and the one with the smaller state is taken.
+        let dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (1, 'a', false, 1),
+                (1, 'b', true, 0),
+            ])
+            .into_dcw(0);
+        let subsafe = dcw.subsafe_equivalence_relation();
+        assert_eq!(subsafe.len(), 4);
+        assert_eq!(
+            dcw.frontier_states(&subsafe).into_iter().collect::<Vec<_>>(),
+            vec![0]
+        );
+    }
+
+    #[test]
+    fn frontier_keeps_components_with_different_languages() {
+        // L(q1) is "finitely many `a`s", and L(q0) = a^ω + a^* b L(q1). The states are not
+        // equivalent, so `H` only relates each safe component to itself, and both are kept.
+        let dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (1, 'a', true, 1),
+                (1, 'b', false, 1),
+            ])
+            .into_dcw(0);
+        assert!(dcw.is_normal());
+        let subsafe = dcw.subsafe_equivalence_relation();
+        assert_eq!(
+            subsafe.iter().copied().collect::<Vec<_>>(),
+            vec![(0, 0), (1, 1)]
+        );
+        assert_eq!(
+            dcw.frontier_states(&subsafe).into_iter().collect::<Vec<_>>(),
+            vec![0, 1]
+        );
     }
 }
