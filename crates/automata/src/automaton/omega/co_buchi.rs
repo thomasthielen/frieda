@@ -626,6 +626,29 @@ where
             self.remove_state(q);
         }
     }
+
+    /// Returns `true` iff `self`, which is assumed to be a nice GFG-tNCW, is safe-centralized.
+    /// Following \[RK22\], this is the case if for all states `q` and `s` with `q ≤ s` (see
+    /// [`Self::subsafe_equivalence_relation`]), `q` and `s` are in the same safe component.
+    /// After [`Self::safe_centralize`], this holds.
+    pub fn is_safe_centralized(&self) -> bool {
+        let component = self.safe_component_indices();
+        self.subsafe_equivalence_relation()
+            .into_iter()
+            .all(|(q, s)| component[&q] == component[&s])
+    }
+
+    /// Returns `true` iff `self` is `α`-homogenous. Following \[RK22\], this is the case if for
+    /// every state `q` and symbol `σ`, the `σ`-transitions leaving `q` are either all safe
+    /// (colored `false`) or all `α`-transitions (colored `true`). After
+    /// [`Self::safe_centralize`], this holds.
+    pub fn is_alpha_homogeneous(&self) -> bool {
+        self.state_indices().all(|q| {
+            let mut colors: BTreeMap<A::Symbol, bool> = BTreeMap::new();
+            self.transitions_from(q)
+                .all(|(_, sym, color, _)| *colors.entry(sym).or_insert(color) == color)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -1451,5 +1474,100 @@ mod tests {
             ])
             .into_ncw(0);
         ncw.safe_centralize();
+    }
+
+    #[test]
+    fn safe_centralization_checks_on_rk22_figures() {
+        // RK22, Example 3.1: Figure 2 is not safe-centralized, as `q2 ≤ q0` but they are in
+        // different safe components. Being deterministic, it is trivially `α`-homogenous.
+        let mut ncw = rk22_figure_2().into_ncw();
+        assert!(!ncw.is_safe_centralized());
+        assert!(ncw.is_alpha_homogeneous());
+        ncw.safe_centralize();
+        assert!(ncw.is_safe_centralized());
+        assert!(ncw.is_alpha_homogeneous());
+
+        // RK22, Example 3.1: Figure 1 is not safe-centralized, as its two states are
+        // strongly-equivalent but in different safe components
+        let mut dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (1, 'a', false, 1),
+                (1, 'b', true, 0),
+            ])
+            .into_dcw(0);
+        assert!(!dcw.is_safe_centralized());
+        dcw.safe_centralize();
+        assert!(dcw.is_safe_centralized());
+        assert!(dcw.is_alpha_homogeneous());
+    }
+
+    #[test]
+    fn not_alpha_homogeneous_with_safe_and_alpha_transition_on_same_letter() {
+        // same automaton as in `ncw_safe_deterministic_despite_nondeterminism_on_alpha_transitions`:
+        // state 0 has both a safe and an `α`-transition on `a`
+        let ncw = NCW::builder()
+            .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
+            .into_ncw(0);
+        assert!(!ncw.is_alpha_homogeneous());
+
+        // several `α`-transitions on the same letter are fine
+        let ncw = NCW::builder().with_edges(RK22_FIGURE_4).into_ncw(0);
+        assert!(ncw.is_alpha_homogeneous());
+    }
+
+    #[test]
+    fn safe_centralized_after_full_pipeline() {
+        // RK22, Figure 2 with two additional states, such that every step of the pipeline has an
+        // effect:
+        // - the `α`-transition `⟨q0, a, q3⟩` into the empty state 3 is not covering, and removing
+        //   it makes state 3 unreachable, just like the state 4, which is unreachable anyway,
+        // - the new initial state 5 reads every letter safely into q0, so `L(q5) = L(q0)` (all
+        //   states of Figure 2 are equivalent), but these safe transitions connect the safe
+        //   components {q5} and {q0, q1}, so they are recolored during normalization,
+        // - safe centralization then removes q5 and q2, and moves the initial state to q0.
+        let mut ncw = NCW::builder()
+            .with_edges(RK22_FIGURE_2)
+            .with_edges([
+                (0, 'a', true, 3),
+                (3, 'a', true, 3),
+                (3, 'b', true, 3),
+                (3, 'c', true, 3),
+                (4, 'a', true, 4),
+                (5, 'a', false, 0),
+                (5, 'b', false, 0),
+                (5, 'c', false, 0),
+            ])
+            .into_ncw(5);
+        assert!(ncw.is_safe_deterministic());
+        assert!(!ncw.is_semantically_deterministic());
+        // q0 has a safe and an `α`-transition on `a`
+        assert!(!ncw.is_alpha_homogeneous());
+
+        ncw.semantically_determinize();
+        assert!(ncw.is_semantically_deterministic());
+        let mut removed: Vec<u32> = ncw
+            .remove_unreachable_states()
+            .into_iter()
+            .map(|(q, _)| q)
+            .collect();
+        removed.sort();
+        assert_eq!(removed, vec![3, 4]);
+        assert!(!ncw.is_normal());
+        ncw.normalize();
+        assert!(ncw.is_normal());
+        assert!(!ncw.is_safe_centralized());
+
+        ncw.safe_centralize();
+        assert_eq!(ncw.initial(), 0);
+        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        // the result is nice, safe-centralized and `α`-homogenous [RK22, Proposition 3.14]
+        assert!(ncw.is_safe_deterministic());
+        assert!(ncw.is_semantically_deterministic());
+        assert!(ncw.remove_unreachable_states().is_empty());
+        assert!(ncw.is_normal());
+        assert!(ncw.is_safe_centralized());
+        assert!(ncw.is_alpha_homogeneous());
     }
 }
