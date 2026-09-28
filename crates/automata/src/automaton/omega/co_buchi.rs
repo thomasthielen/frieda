@@ -8,9 +8,10 @@ use std::collections::BTreeSet;
 
 // The steps of the minimization pipeline of [RK22] are implemented as further inherent methods
 // on the co-Büchi automata below, one module per step.
-mod centralize;
 mod determinize;
 mod normalize;
+mod centralize;
+mod minimize;
 
 #[cfg(test)]
 mod rk22_examples;
@@ -398,5 +399,12 @@ mod tests {
         assert!(ncw.is_normal());
         assert!(ncw.is_safe_centralized());
         assert!(ncw.is_alpha_homogeneous());
+
+        // RK22, Example 3.21: q0 and q1 differ in their safe languages, so safe minimization
+        // changes nothing
+        assert!(ncw.is_safe_minimal());
+        ncw.safe_minimize();
+        assert_eq!(ncw.initial(), 0);
+        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
     }
 }
