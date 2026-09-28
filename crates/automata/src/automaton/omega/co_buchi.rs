@@ -1,6 +1,6 @@
 use crate::automaton::Semantics;
 use crate::core::{Color, alphabet::Alphabet};
-use crate::ts::{Deterministic, Shrinkable, StateColor};
+use crate::ts::{Deterministic, Shrinkable, Sproutable, StateColor};
 use crate::{Automaton, DTS, NTS, TransitionSystem, automaton::InfiniteWordAutomaton, ts::run};
 use automata_core::Void;
 use automata_core::alphabet::CharAlphabet;
@@ -8,10 +8,10 @@ use std::collections::BTreeSet;
 
 // The steps of the minimization pipeline of [RK22] are implemented as further inherent methods
 // on the co-Büchi automata below, one module per step.
-mod determinize;
-mod normalize;
 mod centralize;
+mod determinize;
 mod minimize;
+mod normalize;
 
 #[cfg(test)]
 mod rk22_examples;
@@ -119,6 +119,39 @@ where
         D: Shrinkable,
     {
         self.trim()
+    }
+
+    /// Minimizes `self`, which is assumed to be a GFG-tNCW whose states are all GFG, by applying
+    /// the steps of \[RK22\] in order:
+    /// 1. [`Self::semantically_determinize`] and [`Self::remove_unreachable_states`], followed by
+    ///    [`Self::normalize`], which make `self` nice \[RK22, Theorem 2.2\],
+    /// 2. [`Self::safe_centralize`], which makes it safe-centralized and `α`-homogenous
+    ///    \[RK22, Theorem 3.15\],
+    /// 3. [`Self::safe_minimize`], which makes it safe-minimal \[RK22, Theorem 3.20\].
+    ///
+    /// Afterwards, `self` is a nice, safe-centralized and safe-minimal GFG-tNCW equivalent to the
+    /// original one, and hence a minimal GFG-tNCW \[RK22, Theorem 3.6\]. The indices of the
+    /// remaining states are unchanged.
+    ///
+    /// # Panics
+    /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]), or if one of
+    /// the steps introduces nondeterminism but the transition system backing `self` is
+    /// deterministic, as is the case for a [`DCW`]. This may happen even if the minimal result is
+    /// deterministic, since [`Self::safe_centralize`] redirects `α`-transitions to all equivalent
+    /// states it keeps. Use [`DCW::into_ncw`] first to minimize a [`DCW`].
+    pub fn minimize(&mut self)
+    where
+        D: Shrinkable + Sproutable,
+    {
+        assert!(
+            self.is_safe_deterministic(),
+            "minimization requires a safe deterministic tNCW"
+        );
+        self.semantically_determinize();
+        self.remove_unreachable_states();
+        self.normalize();
+        self.safe_centralize();
+        self.safe_minimize();
     }
 }
 
@@ -406,5 +439,94 @@ mod tests {
         ncw.safe_minimize();
         assert_eq!(ncw.initial(), 0);
         assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+    }
+
+    #[test]
+    fn minimize_rk22_figure_2_with_additional_states() {
+        // same automaton as in `safe_centralized_after_full_pipeline`, minimized in one go
+        let mut ncw = NCW::builder()
+            .with_edges(RK22_FIGURE_2)
+            .with_edges([
+                (0, 'a', true, 3),
+                (3, 'a', true, 3),
+                (3, 'b', true, 3),
+                (3, 'c', true, 3),
+                (4, 'a', true, 4),
+                (5, 'a', false, 0),
+                (5, 'b', false, 0),
+                (5, 'c', false, 0),
+            ])
+            .into_ncw(5);
+        ncw.minimize();
+        assert_eq!(ncw.initial(), 0);
+        assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0, 1]);
+        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert!(ncw.is_safe_minimal());
+    }
+
+    #[test]
+    fn minimize_needs_every_step() {
+        // all states accept "finitely many `b`s" and have the safe language `a^ω`, so they are
+        // strongly-equivalent:
+        // - the safe transition `⟨2, a, 0⟩` connects the safe components {2} and {0, 1}, so it is
+        //   recolored during normalization,
+        // - safe centralization then keeps only {0, 1}, which contains the smallest state,
+        // - safe minimization merges 0 and 1.
+        // Safe centralization redirects the `α`-transitions on `b` to both 0 and 1, so the `DCW`
+        // must be turned into an `NCW` first, even though the result is deterministic again.
+        let dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (0, 'b', true, 0),
+                (1, 'a', false, 0),
+                (1, 'b', true, 1),
+                (2, 'a', false, 0),
+                (2, 'b', true, 2),
+            ])
+            .into_dcw(2);
+        let mut ncw = dcw.clone().into_ncw();
+        ncw.minimize();
+        assert_eq!(ncw.initial(), 0);
+        // the minimal tDCW for "finitely many `b`s", i.e. `A_fm` of RK22, Figure 1 after safe
+        // centralization
+        assert_eq!(
+            sorted_transitions(&ncw),
+            vec![(0, 'a', false, 0), (0, 'b', true, 0)]
+        );
+        let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
+        let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
+        assert_eq!(accepted, vec![true, false, true, false]);
+    }
+
+    #[test]
+    #[should_panic(expected = "deterministic transition system")]
+    fn minimize_panics_on_dcw_if_intermediate_step_is_nondeterministic() {
+        // same automaton as in `minimize_needs_every_step`, without turning it into an `NCW`
+        let mut dcw = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (0, 'b', true, 0),
+                (1, 'a', false, 0),
+                (1, 'b', true, 1),
+                (2, 'a', false, 0),
+                (2, 'b', true, 2),
+            ])
+            .into_dcw(2);
+        dcw.minimize();
+    }
+
+    #[test]
+    #[should_panic(expected = "safe deterministic")]
+    fn minimize_panics_if_not_safe_deterministic() {
+        // same automaton as in `ncw_not_safe_deterministic_with_two_safe_transitions`
+        let mut ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 1),
+                (0, 'a', false, 2),
+                (1, 'a', false, 1),
+                (2, 'a', false, 2),
+            ])
+            .into_ncw(0);
+        ncw.minimize();
     }
 }
