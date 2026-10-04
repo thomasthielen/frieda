@@ -1,4 +1,4 @@
-//! Language containment between states and semantic determinization \[RK22, Theorem 2.2\].
+//! Language containment between states and semantic determinization \[AK22, Theorem 2.2\].
 use super::CoBuchiCondition;
 use crate::core::{
     Color,
@@ -16,8 +16,9 @@ where
     D: TransitionSystem<Alphabet = A, StateColor = Q, EdgeColor = bool>,
 {
     /// Computes the language containment relation between the states of `self`, which is
-    /// assumed to be a GFG-tNCW. The result contains the pair `(q, s)` iff
-    /// `L(A^q) ⊆ L(A^s)`, where `A^q` is `self` with initial state `q`.
+    /// assumed to be a GFG-tNCW. 
+    /// The result contains the pair `(q, s)` iff `L(A^q) ⊆ L(A^s)`, 
+    /// where `A^q` is `self` with initial state `q`.
     ///
     /// Following \[KS15, Theorem 13\], containment is decided with the game `G(A^s, A^q)`,
     /// played on pairs of states `(p, r)` (starting in `(s, q)`). In every round
@@ -147,7 +148,7 @@ where
     }
 
     /// Returns `true` iff `self`, which is assumed to be a GFG-tNCW, is semantically
-    /// deterministic. Following \[RK22\], this is the case if different nondeterministic
+    /// deterministic. Following \[AK22\], this is the case if different nondeterministic
     /// choices lead to equivalent states: for every state `q` and letter `σ`, and all
     /// transitions `⟨q, σ, s⟩` and `⟨q, σ, s'⟩` (of any color), we have `L(A^s) = L(A^s')`.
     ///
@@ -170,7 +171,7 @@ where
     }
 
     /// Semantically determinizes `self`, which is assumed to be a GFG-tNCW, by removing all
-    /// transitions that are not covering. Following \[RK22\], a transition `⟨q, σ, s⟩` is
+    /// transitions that are not covering. Following \[AK22\], a transition `⟨q, σ, s⟩` is
     /// *covering* if for every transition `⟨q, σ, s'⟩`, it holds that `L(A^s') ⊆ L(A^s)`.
     ///
     /// Since the transitions used by a strategy witnessing GFGness are covering \[KS15\], this
@@ -179,7 +180,7 @@ where
     /// holds. Removing transitions also preserves safe determinism.
     ///
     /// Covering is decided with [`Self::gfg_containment_relation`], so this requires that all
-    /// states of `self` are GFG (which is why \[RK22, Theorem 2.2\] removes non-GFG states
+    /// states of `self` are GFG (which is why \[AK22, Theorem 2.2\] removes non-GFG states
     /// first). Otherwise, containments might be missed and covering transitions removed.
     ///
     /// Edges whose expression matches several symbols are kept as they are if they are
@@ -220,7 +221,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::rk22_examples::sorted_transitions;
+    use super::super::ak22_examples::sorted_transitions;
     use super::super::{DCW, NCW};
     use crate::TransitionSystem;
 
@@ -257,8 +258,8 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_2_states_are_equivalent() {
-        // RK22, Example 3.1: all states of the tDCW in Figure 2 are equivalent
+    fn ak22_figure_2_states_are_equivalent() {
+        // AK22, Example 3.1: all states of the tDCW in Figure 2 are equivalent
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
@@ -278,8 +279,8 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_4_is_semantically_deterministic() {
-        // RK22, Figure 4: the tNCW `B_S` for `S = {{q0, q1}}`, whose nondeterminism is on
+    fn ak22_figure_4_is_semantically_deterministic() {
+        // AK22, Figure 4: the tNCW `B_S` for `S = {{q0, q1}}`, whose nondeterminism is on
         // `α`-transitions only, and whose states are all equivalent
         let ncw = NCW::builder()
             .with_edges([
@@ -410,7 +411,7 @@ mod tests {
 
     #[test]
     fn semantically_determinize_keeps_equivalent_successors() {
-        // `rk22_figure_4_is_semantically_deterministic` and
+        // `ak22_figure_4_is_semantically_deterministic` and
         // `ncw_semantically_deterministic_with_structurally_different_successors`: all
         // nondeterministic choices lead to equivalent states, so every transition is covering
         let figure_4 = NCW::builder()

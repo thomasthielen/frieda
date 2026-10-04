@@ -1,4 +1,4 @@
-//! Safe language containment, frontiers and safe centralization \[RK22, Section 3.2\].
+//! Safe language containment, frontiers and safe centralization \[AK22, Section 3.2\].
 use super::CoBuchiCondition;
 use crate::core::{
     Color,
@@ -16,11 +16,11 @@ where
 {
     /// Computes the safe language containment relation between the states of `self`, which is
     /// assumed to be safe deterministic. The result contains the pair `(q, s)` iff
-    /// `L_safe(A^q) ⊆ L_safe(A^s)`. Following \[RK22\], the safe language `L_safe(A^q)` is the set
+    /// `L_safe(A^q) ⊆ L_safe(A^s)`. Following \[AK22\], the safe language `L_safe(A^q)` is the set
     /// of infinite words that can be read from `q` without traversing an `α`-transition.
     ///
     /// Since `self` is safe deterministic, every state has at most one safe run on every word,
-    /// so this reduces to containment between deterministic safety automata \[RK22, Section
+    /// so this reduces to containment between deterministic safety automata \[AK22, Section
     /// 3.2\]. First, the states with a nonempty safe language are computed as a greatest
     /// fixpoint: these are the states with a safe transition to such a state. Then,
     /// `L_safe(A^q) ⊈ L_safe(A^s)` iff there is a finite word `u` and a letter `σ` such that the
@@ -94,7 +94,7 @@ where
     }
 
     /// Computes the subsafe-equivalence relation between the states of `self`, which is assumed
-    /// to be a nice GFG-tNCW. Following \[RK22\], `q` is subsafe-equivalent to `s`, denoted
+    /// to be a nice GFG-tNCW. Following \[AK22\], `q` is subsafe-equivalent to `s`, denoted
     /// `q ≤ s`, if `L(A^q) = L(A^s)` and `L_safe(A^q) ⊆ L_safe(A^s)`. The result contains the pair
     /// `(q, s)` iff `q ≤ s`.
     ///
@@ -111,11 +111,11 @@ where
     /// Returns the states of a frontier of `self`, which is assumed to be a nice GFG-tNCW, given
     /// its subsafe-equivalence relation `subsafe` (see [`Self::subsafe_equivalence_relation`]).
     ///
-    /// Following \[RK22, Section 3.2\], the relation `H` on the safe components of `self` contains
+    /// Following \[AK22, Section 3.2\], the relation `H` on the safe components of `self` contains
     /// `(S, S')` iff there are states `q ∈ S` and `q' ∈ S'` with `q ≤ q'`. A frontier is a set of
     /// safe components such that every safe component `S` has some `S'` in the frontier with
     /// `H(S, S')`, and no two different components in the frontier are related by `H`. Since `H`
-    /// is reflexive and transitive \[RK22, Lemma 3.9\], a frontier is obtained by taking one
+    /// is reflexive and transitive \[AK22, Lemma 3.9\], a frontier is obtained by taking one
     /// component from each ergodic SCC of the graph induced by `H`, and a component `S` lies in
     /// such an SCC iff `H(S, S')` implies `H(S', S)` for all `S'`. Among the components of an
     /// ergodic SCC, the one containing the smallest state is taken, so the result does not
@@ -154,11 +154,11 @@ where
     }
 
     /// Safe-centralizes `self`, which is assumed to be a nice GFG-tNCW, by turning it into the
-    /// tNCW `B_S` of \[RK22, Section 3.2\] for a frontier `S`, in which the smallest state of
+    /// tNCW `B_S` of \[AK22, Section 3.2\] for a frontier `S`, in which the smallest state of
     /// each ergodic SCC of `H` determines the component that is taken (see
     /// [`Self::subsafe_equivalence_relation`] for the relation `≤` that `H` is based on).
     /// Afterwards, `self` is a nice, safe-centralized and
-    /// `α`-homogenous GFG-tNCW equivalent to the original one \[RK22, Theorem 3.15\].
+    /// `α`-homogenous GFG-tNCW equivalent to the original one \[AK22, Theorem 3.15\].
     ///
     /// `B_S` keeps exactly the states in the safe components of `S`, and for each such state `q`
     /// and letter `σ`:
@@ -171,7 +171,7 @@ where
     /// `α`-transitions, i.e. `B_S` is `α`-homogenous. As `self` is normal, safe transitions stay
     /// within their safe component, so no safe transition leads to a removed state. The initial
     /// state is kept if it is in `S`, and is otherwise replaced by the smallest kept state `q'`
-    /// with `q_0 ≤ q'`, which exists by \[RK22, Lemma 3.8\]. The indices of all kept states are
+    /// with `q_0 ≤ q'`, which exists by \[AK22, Lemma 3.8\]. The indices of all kept states are
     /// unchanged.
     ///
     /// # Panics
@@ -204,7 +204,7 @@ where
                 .copied()
                 .find(|&q| subsafe.contains(&(initial, q)))
                 .expect(
-                    "the initial state is subsafe-equivalent to a frontier state [RK22, Lemma 3.8]",
+                    "the initial state is subsafe-equivalent to a frontier state [AK22, Lemma 3.8]",
                 );
         }
 
@@ -259,7 +259,7 @@ where
     }
 
     /// Returns `true` iff `self`, which is assumed to be a nice GFG-tNCW, is safe-centralized.
-    /// Following \[RK22\], this is the case if for all states `q` and `s` with `q ≤ s` (see
+    /// Following \[AK22\], this is the case if for all states `q` and `s` with `q ≤ s` (see
     /// [`Self::subsafe_equivalence_relation`]), `q` and `s` are in the same safe component.
     /// After [`Self::safe_centralize`], this holds.
     pub fn is_safe_centralized(&self) -> bool {
@@ -269,7 +269,7 @@ where
             .all(|(q, s)| component[&q] == component[&s])
     }
 
-    /// Returns `true` iff `self` is `α`-homogenous. Following \[RK22\], this is the case if for
+    /// Returns `true` iff `self` is `α`-homogenous. Following \[AK22\], this is the case if for
     /// every state `q` and symbol `σ`, the `σ`-transitions leaving `q` are either all safe
     /// (colored `false`) or all `α`-transitions (colored `true`). After
     /// [`Self::safe_centralize`], this holds.
@@ -284,16 +284,16 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::rk22_examples::{
-        RK22_FIGURE_2, RK22_FIGURE_4, rk22_figure_2, sorted_transitions,
+    use super::super::ak22_examples::{
+        AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_2, sorted_transitions,
     };
     use super::super::{DCW, NCW};
     use crate::{Pointed, TransitionSystem};
     use automata_core::upw;
 
     #[test]
-    fn rk22_figure_2_safe_containment() {
-        // RK22, Example 3.1: the safe languages are `L_safe(q0) = (a + bc)^ω`,
+    fn ak22_figure_2_safe_containment() {
+        // AK22, Example 3.1: the safe languages are `L_safe(q0) = (a + bc)^ω`,
         // `L_safe(q1) = c · L_safe(q0)` and `L_safe(q2) = a^ω`, so apart from the reflexive
         // pairs, only `L_safe(q2) ⊆ L_safe(q0)` holds
         let dcw = DCW::builder()
@@ -363,10 +363,10 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_2_frontier() {
-        // RK22, Example 3.10: as all states are equivalent and `L_safe(q2) ⊆ L_safe(q0)`, we have
+    fn ak22_figure_2_frontier() {
+        // AK22, Example 3.10: as all states are equivalent and `L_safe(q2) ⊆ L_safe(q0)`, we have
         // `q2 ≤ q0`, so `H({q2}, {q0, q1})` and the single frontier is `{{q0, q1}}`
-        let dcw = rk22_figure_2();
+        let dcw = ak22_figure_2();
         let subsafe = dcw.subsafe_equivalence_relation();
         assert_eq!(
             subsafe.iter().copied().collect::<Vec<_>>(),
@@ -381,8 +381,8 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_1_frontier_picks_one_of_strongly_equivalent_components() {
-        // RK22, Figure 1: the tDCW `A_fm` for "finitely many `b`s". Both states are
+    fn ak22_figure_1_frontier_picks_one_of_strongly_equivalent_components() {
+        // AK22, Figure 1: the tDCW `A_fm` for "finitely many `b`s". Both states are
         // strongly-equivalent (safe language `a^ω`), but lie in different safe components
         // `{q0}` and `{q1}`, which are hence related by `H` in both directions. Only one of them
         // may be in the frontier, and the one with the smaller state is taken.
@@ -436,15 +436,15 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_2_safe_centralizes_to_figure_4() {
-        // RK22, Example 3.10: the state q2 is removed, and every `α`-transition of q0 and q1
+    fn ak22_figure_2_safe_centralizes_to_figure_4() {
+        // AK22, Example 3.10: the state q2 is removed, and every `α`-transition of q0 and q1
         // that is not overruled by a safe transition on the same letter is redirected to both
         // q0 and q1, as all states are equivalent
-        let mut ncw = NCW::builder().with_edges(RK22_FIGURE_2).into_ncw(0);
+        let mut ncw = NCW::builder().with_edges(AK22_FIGURE_2).into_ncw(0);
         ncw.safe_centralize();
         assert_eq!(ncw.initial(), 0);
         assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0, 1]);
-        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
         assert!(ncw.is_safe_deterministic());
         assert!(ncw.is_semantically_deterministic());
         assert!(ncw.is_normal());
@@ -452,17 +452,17 @@ mod tests {
 
     #[test]
     fn safe_centralize_moves_initial_state_out_of_removed_component() {
-        // same as `rk22_figure_2_safe_centralizes_to_figure_4`, but starting in q2, which is
+        // same as `ak22_figure_2_safe_centralizes_to_figure_4`, but starting in q2, which is
         // removed. As `q2 ≤ q0` but not `q2 ≤ q1`, the new initial state is q0.
-        let mut ncw = NCW::builder().with_edges(RK22_FIGURE_2).into_ncw(2);
+        let mut ncw = NCW::builder().with_edges(AK22_FIGURE_2).into_ncw(2);
         ncw.safe_centralize();
         assert_eq!(ncw.initial(), 0);
-        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
     }
 
     #[test]
-    fn rk22_figure_1_safe_centralizes_to_single_state() {
-        // RK22, Figure 1: only the safe component {q0} is kept, and the `α`-transition on `b` is
+    fn ak22_figure_1_safe_centralizes_to_single_state() {
+        // AK22, Figure 1: only the safe component {q0} is kept, and the `α`-transition on `b` is
         // redirected to q0 itself. The result is deterministic, so a `DCW` can represent it.
         let mut dcw = DCW::builder()
             .with_edges([
@@ -487,20 +487,20 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_2_as_dcw_safe_centralizes_after_into_ncw() {
+    fn ak22_figure_2_as_dcw_safe_centralizes_after_into_ncw() {
         // unlike in `safe_centralize_panics_if_dcw_cannot_represent_result`, converting the `DCW`
         // first allows the nondeterministic `α`-transitions of Figure 4
-        let mut ncw = rk22_figure_2().into_ncw();
+        let mut ncw = ak22_figure_2().into_ncw();
         ncw.safe_centralize();
-        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
     }
 
     #[test]
     #[should_panic(expected = "deterministic transition system")]
     fn safe_centralize_panics_if_dcw_cannot_represent_result() {
-        // RK22, Figure 2 as a `DCW`: `B_S` has two `c`-transitions from q0, which the
+        // AK22, Figure 2 as a `DCW`: `B_S` has two `c`-transitions from q0, which the
         // deterministic backing transition system cannot represent
-        let mut dcw = rk22_figure_2();
+        let mut dcw = ak22_figure_2();
         dcw.safe_centralize();
     }
 
@@ -520,17 +520,17 @@ mod tests {
     }
 
     #[test]
-    fn safe_centralization_checks_on_rk22_figures() {
-        // RK22, Example 3.1: Figure 2 is not safe-centralized, as `q2 ≤ q0` but they are in
+    fn safe_centralization_checks_on_ak22_figures() {
+        // AK22, Example 3.1: Figure 2 is not safe-centralized, as `q2 ≤ q0` but they are in
         // different safe components. Being deterministic, it is trivially `α`-homogenous.
-        let mut ncw = rk22_figure_2().into_ncw();
+        let mut ncw = ak22_figure_2().into_ncw();
         assert!(!ncw.is_safe_centralized());
         assert!(ncw.is_alpha_homogeneous());
         ncw.safe_centralize();
         assert!(ncw.is_safe_centralized());
         assert!(ncw.is_alpha_homogeneous());
 
-        // RK22, Example 3.1: Figure 1 is not safe-centralized, as its two states are
+        // AK22, Example 3.1: Figure 1 is not safe-centralized, as its two states are
         // strongly-equivalent but in different safe components
         let mut dcw = DCW::builder()
             .with_edges([
@@ -556,7 +556,7 @@ mod tests {
         assert!(!ncw.is_alpha_homogeneous());
 
         // several `α`-transitions on the same letter are fine
-        let ncw = NCW::builder().with_edges(RK22_FIGURE_4).into_ncw(0);
+        let ncw = NCW::builder().with_edges(AK22_FIGURE_4).into_ncw(0);
         assert!(ncw.is_alpha_homogeneous());
     }
 }

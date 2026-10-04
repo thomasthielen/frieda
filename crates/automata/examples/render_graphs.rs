@@ -37,7 +37,7 @@ fn main() {
         nondet_aut.ts().size()
     );
 
-    // example automaton from RK22 - figure 1
+    // example automaton from AK22 - figure 1
     let nice_but_not_minimal = TSBuilder::without_state_colors()
         .with_edges([
             (0, 'a', false, 0),
@@ -59,7 +59,7 @@ fn main() {
     save_graph("ncw", &ncw_test);
     assert!(ncw_test.is_safe_deterministic());
 
-    // example automaton from RK22 - figure 2
+    // example automaton from AK22 - figure 2
     let safe_minimal_but_not_safe_centralized = DCW::builder()
         .with_edges([
             (0, 'a', false, 0),
@@ -78,7 +78,7 @@ fn main() {
         &safe_minimal_but_not_safe_centralized,
     );
 
-    // example automaton from RK22 - figure 4
+    // example automaton from AK22 - figure 4
     let safe_centralized_result = NCW::builder()
         .with_edges([
             (0, 'a', false, 0),
@@ -112,4 +112,24 @@ fn main() {
     save_graph("ncw_test", &ncw);
     ncw.semantically_determinize();
     save_graph("ncw_test_semantically_determinized", &ncw);
+
+    let example_check_01 = DCW::builder()
+        .with_edges([
+            (0, 'a', true, 1),
+            (0, 'b', false, 0),
+            (1, 'a', true, 1),
+            (1, 'b', false, 0),
+        ])
+        .into_dcw(0);
+    save_graph("example_check_01", &example_check_01);
+
+    let determinize = DCW::builder()
+    .with_edges([
+        (0, 'a', false, 0),
+        (0, 'b', true, 1),
+        (1, 'a', false, 1),
+        (1, 'b', true, 0),
+    ])
+    .into_dcw(0);
+    save_graph("determinize", &determinize);
 }

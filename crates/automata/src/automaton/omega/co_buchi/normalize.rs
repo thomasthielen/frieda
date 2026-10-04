@@ -1,4 +1,4 @@
-//! Safe components and normalization \[RK22, Theorem 2.2\], \[KS15, Lemma 46\].
+//! Safe components and normalization \[AK22, Theorem 2.2\], \[KS15, Lemma 46\].
 use super::CoBuchiCondition;
 use crate::core::{Color, alphabet::Alphabet};
 use crate::ts::{Shrinkable, Sproutable};
@@ -11,7 +11,7 @@ where
     Q: Color,
     D: TransitionSystem<Alphabet = A, StateColor = Q, EdgeColor = bool>,
 {
-    /// Returns, for every state of `self`, the index of its safe component. Following \[RK22\],
+    /// Returns, for every state of `self`, the index of its safe component. Following \[AK22\],
     /// the safe components of a tNCW are the SCCs of the graph obtained by removing all
     /// `α`-transitions (colored `true`, see [`DCW`](super::DCW) for the naming). Two states are
     /// in the same safe component iff they are mapped to the same index.
@@ -24,7 +24,7 @@ where
             .collect()
     }
 
-    /// Returns `true` iff `self` is normal. Following \[RK22\], a tNCW is normal if there are no
+    /// Returns `true` iff `self` is normal. Following \[AK22\], a tNCW is normal if there are no
     /// `ᾱ`-transitions (i.e. safe transitions, colored `false`) connecting different safe
     /// components. That is, whenever there is a path of `ᾱ`-transitions from `q` to `s`, there
     /// is also a path of `ᾱ`-transitions from `s` to `q`.
@@ -48,7 +48,7 @@ where
     /// takes a recolored transition infinitely often leaves a safe component infinitely often,
     /// and since the safe components form a DAG, it must then also take infinitely many
     /// `α`-transitions that were already there. Hence, the language and the GFGness of every
-    /// state are unchanged \[RK22, Theorem 2.2\]. As no transition or state is removed, and
+    /// state are unchanged \[AK22, Theorem 2.2\]. As no transition or state is removed, and
     /// transitions only ever change from safe to `α`, reachability, safe determinism and
     /// semantic determinism are preserved as well. This is the last step towards a *nice*
     /// GFG-tNCW, after [`Self::remove_unreachable_states`].
@@ -81,7 +81,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::rk22_examples::sorted_transitions;
+    use super::super::ak22_examples::sorted_transitions;
     use super::super::{DCW, NCW};
     use automata_core::upw;
 
@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn normalize_keeps_normal_automaton() {
-        // RK22, Figure 2: the safe components are {0, 1} and {2}, and all safe transitions
+        // AK22, Figure 2: the safe components are {0, 1} and {2}, and all safe transitions
         // stay within them, so the automaton is already normal
         let dcw = DCW::builder()
             .with_edges([

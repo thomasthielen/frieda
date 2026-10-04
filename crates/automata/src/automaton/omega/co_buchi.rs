@@ -6,7 +6,7 @@ use automata_core::Void;
 use automata_core::alphabet::CharAlphabet;
 use std::collections::BTreeSet;
 
-// The steps of the minimization pipeline of [RK22] are implemented as further inherent methods
+// The steps of the minimization pipeline of [AK22] are implemented as further inherent methods
 // on the co-Büchi automata below, one module per step.
 mod centralize;
 mod determinize;
@@ -14,7 +14,7 @@ mod minimize;
 mod normalize;
 
 #[cfg(test)]
-mod rk22_examples;
+mod ak22_examples;
 
 /// Defines the [`Semantics`] of a deterministic co-Büchi automaton (DCW),
 /// which is an acceptor of infinite words. It is the dual of [`super::BuchiCondition`]:
@@ -37,10 +37,11 @@ impl<T: Deterministic<EdgeColor = bool>> Semantics<T, true> for CoBuchiCondition
 
 /// A deterministic co-Büchi automaton (DCW) is a deterministic automaton with
 /// (transition-based) co-Büchi acceptance condition. It accepts a word if its run
-/// takes `α`-transitions only finitely often. This is the dual of [`super::DBA`].
+/// takes `α`-transitions (i.e. ones that are labeled with `true`) only finitely often.
+/// This is the dual of [`super::DBA`].
 ///
 /// ### Naming of transitions
-/// Following \[RK22\], the acceptance condition is a set `α` of transitions, which here
+/// Following \[AK22\], the acceptance condition is a set `α` of transitions, which here
 /// are the ones colored `true`. We call these the `α`-transitions, and the ones colored
 /// `false` the `ᾱ`-transitions or *safe* transitions. The terms accepting/rejecting
 /// are reserved for runs, not transitions: a run is accepting iff it takes
@@ -84,12 +85,11 @@ where
     Q: Color,
     D: TransitionSystem<Alphabet = A, StateColor = Q, EdgeColor = bool>,
 {
-    /// Returns `true` iff `self` is safe deterministic. Following \[RK22\], a (t)NCW is safe
-    /// deterministic if removing its `α`-transitions (colored `true`, see [`DCW`] for the
-    /// naming) removes all nondeterministic choices. Formally, this means that for every
-    /// state `q` and symbol `σ`, there is at most one `ᾱ`-transition (i.e. a safe
-    /// transition, colored `false`) labeled `σ` leaving `q`; there may still be arbitrarily
-    /// many `α`-transitions on `q` and `σ`.
+    /// Returns `true` iff `self` is safe deterministic. A (t)NCW is safe deterministic if
+    /// removing its `α`-transitions (colored `true`) removes all nondeterministic choices.
+    /// Formally, this means that for every state `q` and symbol `σ`, there is at most one
+    /// `ᾱ`-transition (i.e. a safe transition, colored `false`) labeled `σ` leaving `q`;
+    /// there may still be arbitrarily many `α`-transitions on `q` and `σ`.
     ///
     /// Note that every genuinely deterministic transition system (such as the one backing a
     /// [`DCW`]) is trivially safe deterministic, since it has at most one `σ`-transition from
@@ -107,7 +107,7 @@ where
     /// all transitions leaving or entering them, and returns the removed states with their
     /// colors. The indices of the remaining states are unchanged.
     ///
-    /// Following \[RK22, Theorem 2.2\], this is the step after [`Self::semantically_determinize`]:
+    /// Following \[AK22, Theorem 2.2\], this is the step after [`Self::semantically_determinize`]:
     /// removing unreachable states affects neither the language nor the GFGness of `self`, since
     /// no run from the initial state ever visits them. It also preserves the other properties
     /// obtained so far: the languages of the remaining states only depend on states reachable
@@ -122,15 +122,15 @@ where
     }
 
     /// Minimizes `self`, which is assumed to be a GFG-tNCW whose states are all GFG, by applying
-    /// the steps of \[RK22\] in order:
+    /// the steps of \[AK22\] in order:
     /// 1. [`Self::semantically_determinize`] and [`Self::remove_unreachable_states`], followed by
-    ///    [`Self::normalize`], which make `self` nice \[RK22, Theorem 2.2\],
+    ///    [`Self::normalize`], which make `self` nice \[AK22, Theorem 2.2\],
     /// 2. [`Self::safe_centralize`], which makes it safe-centralized and `α`-homogenous
-    ///    \[RK22, Theorem 3.15\],
-    /// 3. [`Self::safe_minimize`], which makes it safe-minimal \[RK22, Theorem 3.20\].
+    ///    \[AK22, Theorem 3.15\],
+    /// 3. [`Self::safe_minimize`], which makes it safe-minimal \[AK22, Theorem 3.20\].
     ///
     /// Afterwards, `self` is a nice, safe-centralized and safe-minimal GFG-tNCW equivalent to the
-    /// original one, and hence a minimal GFG-tNCW \[RK22, Theorem 3.6\]. The indices of the
+    /// original one, and hence a minimal GFG-tNCW \[AK22, Theorem 3.6\]. The indices of the
     /// remaining states are unchanged.
     ///
     /// # Panics
@@ -157,7 +157,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::rk22_examples::{RK22_FIGURE_2, RK22_FIGURE_4, sorted_transitions};
+    use super::ak22_examples::{AK22_FIGURE_2, AK22_FIGURE_4, sorted_transitions};
     use super::{DCW, NCW};
     use crate::ts::TSBuilder;
     use crate::{Pointed, TransitionSystem};
@@ -165,10 +165,7 @@ mod tests {
 
     #[test]
     fn dcws() {
-        // same automaton as in the `dbas` test in `automaton.rs`, but with co-Büchi
-        // semantics: the `true`-colored transitions are the ones reading `a`, so this
-        // accepts iff only finitely many `a`s are read, i.e. exactly the complement of
-        // the language of the DBA.
+        // complement of the `dbas` test in `automaton.rs`
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', true, 1),
@@ -181,14 +178,13 @@ mod tests {
         assert!(dcw.accepts(upw!("b")));
         assert!(!dcw.accepts(upw!("a")));
         assert!(dcw.accepts(upw!("aab", "b")));
+
+        assert!(!dcw.is_empty());
     }
 
     #[test]
     fn ncw_is_a_transition_system() {
         use crate::TransitionSystem;
-
-        // `NCW` must support genuine nondeterminism (two `a`-labeled edges from state 0)
-        // and expose `TransitionSystem` directly, without needing `.accepts()`.
         let nts = TSBuilder::<Void, bool, true>::without_state_colors()
             .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
             .into_nts();
@@ -197,29 +193,15 @@ mod tests {
     }
 
     #[test]
-    fn ncw_builder_into_ncw() {
-        use crate::TransitionSystem;
-
-        // same automaton as in `ncw_is_a_transition_system`, built via `into_ncw`
-        let ncw = NCW::builder()
-            .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
-            .into_ncw(0);
-        assert_eq!(ncw.edges_from(0).unwrap().count(), 2);
-    }
-
-    #[test]
-    fn into_ncw_does_not_check_safe_determinism() {
-        // `into_ncw` is a plain constructor: two safe `a`-transitions leave state 0, and it
-        // must still build the automaton instead of rejecting it.
-        let ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', false, 2),
-                (1, 'a', false, 1),
-                (2, 'a', false, 2),
-            ])
-            .into_ncw(0);
-        assert!(!ncw.is_safe_deterministic());
+    fn dcw_into_ncw() {
+        let dcw = DCW::builder().with_edges(AK22_FIGURE_2).into_dcw(2);
+        let ncw = dcw.clone().into_ncw();
+        assert_eq!(ncw.initial(), 2);
+        assert_eq!(
+            ncw.state_indices().collect::<Vec<_>>(),
+            dcw.state_indices().collect::<Vec<_>>()
+        );
+        assert_eq!(sorted_transitions(&ncw), sorted_transitions(&dcw));
     }
 
     #[test]
@@ -237,31 +219,23 @@ mod tests {
     }
 
     #[test]
-    fn ncw_safe_deterministic_despite_nondeterminism_on_alpha_transitions() {
-        // two `a`-labeled edges leave state 0, but only one of them (to state 1) is
-        // `false`-colored/safe; the other is a `true`-colored `α`-transition. Removing
-        // the `α`-transition leaves a deterministic automaton, so this is safe deterministic.
-        let nts = TSBuilder::<Void, bool, true>::without_state_colors()
+    fn ncw_safe_deterministic() {
+        let ncw = NCW::builder()
             .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
-            .into_nts();
-        let ncw = NCW::from_parts(nts, 0);
+            .into_ncw(0);
         assert!(ncw.is_safe_deterministic());
     }
 
     #[test]
-    fn ncw_not_safe_deterministic_with_two_safe_transitions() {
-        // state 0 has two `false`-colored (safe) `a`-transitions, to states 1 and 2.
-        // Removing `α`-transitions does not resolve this choice, so it is not safe
-        // deterministic, even though the automaton has no `α`-transitions at all.
-        let nts = TSBuilder::<Void, bool, true>::without_state_colors()
+    fn ncw_not_safe_deterministic() {
+        let ncw = NCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
                 (0, 'a', false, 2),
                 (1, 'a', false, 1),
                 (2, 'a', false, 2),
             ])
-            .into_nts();
-        let ncw = NCW::from_parts(nts, 0);
+            .into_ncw(0);
         assert!(!ncw.is_safe_deterministic());
     }
 
@@ -369,20 +343,8 @@ mod tests {
     }
 
     #[test]
-    fn dcw_into_ncw_keeps_states_transitions_and_initial_state() {
-        let dcw = DCW::builder().with_edges(RK22_FIGURE_2).into_dcw(2);
-        let ncw = dcw.clone().into_ncw();
-        assert_eq!(ncw.initial(), 2);
-        assert_eq!(
-            ncw.state_indices().collect::<Vec<_>>(),
-            dcw.state_indices().collect::<Vec<_>>()
-        );
-        assert_eq!(sorted_transitions(&ncw), sorted_transitions(&dcw));
-    }
-
-    #[test]
     fn safe_centralized_after_full_pipeline() {
-        // RK22, Figure 2 with two additional states, such that every step of the pipeline has an
+        // AK22, Figure 2 with two additional states, such that every step of the pipeline has an
         // effect:
         // - the `α`-transition `⟨q0, a, q3⟩` into the empty state 3 is not covering, and removing
         //   it makes state 3 unreachable, just like the state 4, which is unreachable anyway,
@@ -391,7 +353,7 @@ mod tests {
         //   components {q5} and {q0, q1}, so they are recolored during normalization,
         // - safe centralization then removes q5 and q2, and moves the initial state to q0.
         let mut ncw = NCW::builder()
-            .with_edges(RK22_FIGURE_2)
+            .with_edges(AK22_FIGURE_2)
             .with_edges([
                 (0, 'a', true, 3),
                 (3, 'a', true, 3),
@@ -424,8 +386,8 @@ mod tests {
 
         ncw.safe_centralize();
         assert_eq!(ncw.initial(), 0);
-        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
-        // the result is nice, safe-centralized and `α`-homogenous [RK22, Proposition 3.14]
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
+        // the result is nice, safe-centralized and `α`-homogenous [AK22, Proposition 3.14]
         assert!(ncw.is_safe_deterministic());
         assert!(ncw.is_semantically_deterministic());
         assert!(ncw.remove_unreachable_states().is_empty());
@@ -433,19 +395,19 @@ mod tests {
         assert!(ncw.is_safe_centralized());
         assert!(ncw.is_alpha_homogeneous());
 
-        // RK22, Example 3.21: q0 and q1 differ in their safe languages, so safe minimization
+        // AK22, Example 3.21: q0 and q1 differ in their safe languages, so safe minimization
         // changes nothing
         assert!(ncw.is_safe_minimal());
         ncw.safe_minimize();
         assert_eq!(ncw.initial(), 0);
-        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
     }
 
     #[test]
-    fn minimize_rk22_figure_2_with_additional_states() {
+    fn minimize_ak22_figure_2_with_additional_states() {
         // same automaton as in `safe_centralized_after_full_pipeline`, minimized in one go
         let mut ncw = NCW::builder()
-            .with_edges(RK22_FIGURE_2)
+            .with_edges(AK22_FIGURE_2)
             .with_edges([
                 (0, 'a', true, 3),
                 (3, 'a', true, 3),
@@ -460,7 +422,7 @@ mod tests {
         ncw.minimize();
         assert_eq!(ncw.initial(), 0);
         assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0, 1]);
-        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
         assert!(ncw.is_safe_minimal());
     }
 
@@ -487,7 +449,7 @@ mod tests {
         let mut ncw = dcw.clone().into_ncw();
         ncw.minimize();
         assert_eq!(ncw.initial(), 0);
-        // the minimal tDCW for "finitely many `b`s", i.e. `A_fm` of RK22, Figure 1 after safe
+        // the minimal tDCW for "finitely many `b`s", i.e. `A_fm` of AK22, Figure 1 after safe
         // centralization
         assert_eq!(
             sorted_transitions(&ncw),

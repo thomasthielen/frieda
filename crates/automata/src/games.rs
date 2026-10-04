@@ -160,6 +160,7 @@ impl ParityGame {
     }
 }
 
+// for each pair of a and b: returns true only on a = true and b = false
 fn difference(a: &[bool], b: &[bool]) -> Vec<bool> {
     a.iter().zip(b).map(|(&x, &y)| x && !y).collect()
 }
@@ -223,5 +224,48 @@ mod tests {
         game.add_edge(v0, v1);
         game.add_edge(v1, v0);
         assert_eq!(game.solve(), vec![Player::Even, Player::Even]);
+    }
+
+    #[test]
+    fn icag_example() {
+        // Example taken from the lecture "Infinite Computation and Games" by Christof Löding (RWTH)
+        let mut game = ParityGame::new();
+        let v0 = game.add_vertex(Player::Even, 3);
+        let v1 = game.add_vertex(Player::Odd, 2);
+        let v2 = game.add_vertex(Player::Odd, 2);
+        let v3 = game.add_vertex(Player::Odd, 3);
+        let v4 = game.add_vertex(Player::Odd, 2);
+        let v5 = game.add_vertex(Player::Even, 0);
+        let v6 = game.add_vertex(Player::Odd, 4);
+        let v7 = game.add_vertex(Player::Even, 1);
+        game.add_edge(v0, v1);
+        game.add_edge(v0, v4);
+        game.add_edge(v1, v0);
+        game.add_edge(v1, v2);
+        game.add_edge(v1, v5);
+        game.add_edge(v2, v3);
+        game.add_edge(v2, v5);
+        game.add_edge(v3, v7);
+        game.add_edge(v4, v0);
+        game.add_edge(v4, v5);
+        game.add_edge(v5, v1);
+        game.add_edge(v5, v2);
+        game.add_edge(v6, v2);
+        game.add_edge(v6, v7);
+        game.add_edge(v7, v6);
+        game.add_edge(v7, v3);
+        assert_eq!(
+            game.solve(),
+            vec![
+                Player::Odd,
+                Player::Odd,
+                Player::Even,
+                Player::Even,
+                Player::Odd,
+                Player::Even,
+                Player::Even,
+                Player::Even
+            ]
+        );
     }
 }

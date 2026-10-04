@@ -1,11 +1,11 @@
-//! Examples from \[RK22\] and helpers shared by the tests of the co-Büchi modules.
+//! Examples from \[AK22\] and helpers shared by the tests of the co-Büchi modules.
 use super::DCW;
 use crate::TransitionSystem;
 use automata_core::alphabet::CharAlphabet;
 
-/// RK22, Figure 2: a nice tDCW whose states are all equivalent, but differ in their safe
+/// AK22, Figure 2: a nice tDCW whose states are all equivalent, but differ in their safe
 /// languages. Its safe components are `{q0, q1}` and `{q2}`.
-pub(super) const RK22_FIGURE_2: [(u32, char, bool, u32); 9] = [
+pub(super) const AK22_FIGURE_2: [(u32, char, bool, u32); 9] = [
     (0, 'a', false, 0),
     (0, 'b', false, 1),
     (0, 'c', true, 2),
@@ -17,12 +17,12 @@ pub(super) const RK22_FIGURE_2: [(u32, char, bool, u32); 9] = [
     (2, 'c', true, 0),
 ];
 
-pub(super) fn rk22_figure_2() -> DCW {
-    DCW::builder().with_edges(RK22_FIGURE_2).into_dcw(0)
+pub(super) fn ak22_figure_2() -> DCW {
+    DCW::builder().with_edges(AK22_FIGURE_2).into_dcw(0)
 }
 
-/// The tNCW `B_S` for `S = {{q0, q1}}` of RK22, Figure 4, obtained from Figure 2.
-pub(super) const RK22_FIGURE_4: [(u32, char, bool, u32); 9] = [
+/// The tNCW `B_S` for `S = {{q0, q1}}` of AK22, Figure 4, obtained from Figure 2.
+pub(super) const AK22_FIGURE_4: [(u32, char, bool, u32); 9] = [
     (0, 'a', false, 0),
     (0, 'b', false, 1),
     (0, 'c', true, 0),

@@ -1,4 +1,4 @@
-//! Strong equivalence and safe minimization \[RK22, Section 3.3\].
+//! Strong equivalence and safe minimization \[AK22, Section 3.3\].
 use super::CoBuchiCondition;
 use crate::core::{Color, alphabet::Alphabet};
 use crate::ts::{Shrinkable, Sproutable};
@@ -12,7 +12,7 @@ where
     D: TransitionSystem<Alphabet = A, StateColor = Q, EdgeColor = bool>,
 {
     /// Computes the strong-equivalence relation between the states of `self`, which is assumed
-    /// to be a nice GFG-tNCW. Following \[RK22\], `q` and `s` are strongly-equivalent, denoted
+    /// to be a nice GFG-tNCW. Following \[AK22\], `q` and `s` are strongly-equivalent, denoted
     /// `q ≈ s`, if `L(A^q) = L(A^s)` and `L_safe(A^q) = L_safe(A^s)`. The result contains the pair
     /// `(q, s)` iff `q ≈ s`.
     ///
@@ -28,7 +28,7 @@ where
     }
 
     /// Returns `true` iff `self`, which is assumed to be a nice GFG-tNCW, is safe-minimal.
-    /// Following \[RK22\], this is the case if no two different states are strongly-equivalent
+    /// Following \[AK22\], this is the case if no two different states are strongly-equivalent
     /// (see [`Self::strong_equivalence_relation`]). After [`Self::safe_minimize`], this holds.
     pub fn is_safe_minimal(&self) -> bool {
         self.strong_equivalence_relation()
@@ -38,10 +38,10 @@ where
 
     /// Safe-minimizes `self`, which is assumed to be a nice, safe-centralized and `α`-homogenous
     /// GFG-tNCW (as obtained by [`Self::safe_centralize`]), by turning it into the quotient tNCW
-    /// `C` of \[RK22, Section 3.3\], in which strongly-equivalent states are merged (see
+    /// `C` of \[AK22, Section 3.3\], in which strongly-equivalent states are merged (see
     /// [`Self::strong_equivalence_relation`]). Afterwards, `self` is a nice, safe-centralized,
-    /// safe-minimal and `α`-homogenous GFG-tNCW equivalent to the original one \[RK22, Theorem
-    /// 3.20\], and hence a minimal GFG-tNCW \[RK22, Theorem 3.6\].
+    /// safe-minimal and `α`-homogenous GFG-tNCW equivalent to the original one \[AK22, Theorem
+    /// 3.20\], and hence a minimal GFG-tNCW \[AK22, Theorem 3.6\].
     ///
     /// Each equivalence class `[q]` of `≈` is represented by its smallest state, which is kept,
     /// while all other states are removed. The indices of the kept states are unchanged. There
@@ -117,12 +117,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::rk22_examples::{RK22_FIGURE_4, rk22_figure_2, sorted_transitions};
+    use super::super::ak22_examples::{AK22_FIGURE_4, ak22_figure_2, sorted_transitions};
     use super::super::{DCW, NCW};
     use crate::{Pointed, TransitionSystem};
     use automata_core::upw;
 
-    /// RK22, Figure 4 with q0 split into the strongly-equivalent states 0 and 2, which alternate
+    /// AK22, Figure 4 with q0 split into the strongly-equivalent states 0 and 2, which alternate
     /// on `a`. All states are equivalent, as in Figure 4, and the automaton is deterministic,
     /// nice, safe-centralized (it has a single safe component) and `α`-homogenous. The
     /// `α`-transitions on `c` of 0 and 2 lead to different states, so merging 0 and 2 yields a
@@ -140,8 +140,8 @@ mod tests {
     ];
 
     #[test]
-    fn rk22_figure_1_strong_equivalence() {
-        // RK22, Example 3.1: the two states of `A_fm` are strongly-equivalent, so it is not
+    fn ak22_figure_1_strong_equivalence() {
+        // AK22, Example 3.1: the two states of `A_fm` are strongly-equivalent, so it is not
         // safe-minimal
         let dcw = DCW::builder()
             .with_edges([
@@ -156,10 +156,10 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_2_is_safe_minimal() {
-        // RK22, Example 3.1: all states of Figure 2 differ in their safe languages, even though
+    fn ak22_figure_2_is_safe_minimal() {
+        // AK22, Example 3.1: all states of Figure 2 differ in their safe languages, even though
         // `q2 ≤ q0`
-        let dcw = rk22_figure_2();
+        let dcw = ak22_figure_2();
         assert_eq!(
             dcw.strong_equivalence_relation()
                 .into_iter()
@@ -170,19 +170,19 @@ mod tests {
     }
 
     #[test]
-    fn rk22_figure_4_safe_minimizes_to_itself() {
-        // RK22, Example 3.21: q0 and q1 differ in their safe languages, so `C` is identical to
+    fn ak22_figure_4_safe_minimizes_to_itself() {
+        // AK22, Example 3.21: q0 and q1 differ in their safe languages, so `C` is identical to
         // `B_S`
-        let mut ncw = NCW::builder().with_edges(RK22_FIGURE_4).into_ncw(0);
+        let mut ncw = NCW::builder().with_edges(AK22_FIGURE_4).into_ncw(0);
         assert!(ncw.is_safe_minimal());
         ncw.safe_minimize();
         assert_eq!(ncw.initial(), 0);
-        assert_eq!(sorted_transitions(&ncw), RK22_FIGURE_4.to_vec());
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
     }
 
     #[test]
     fn safe_minimize_merges_strongly_equivalent_states_in_one_safe_component() {
-        // unlike in RK22, Figure 1, the strongly-equivalent states 0 and 1 are in the same safe
+        // unlike in AK22, Figure 1, the strongly-equivalent states 0 and 1 are in the same safe
         // component, so safe centralization keeps both and safe minimization merges them. The
         // result is deterministic, so a `DCW` can represent it.
         let mut dcw = DCW::builder()
@@ -242,7 +242,7 @@ mod tests {
             ]
         );
         // the result is nice, safe-centralized, safe-minimal and `α`-homogenous
-        // [RK22, Proposition 3.19]
+        // [AK22, Proposition 3.19]
         assert!(ncw.is_safe_deterministic());
         assert!(ncw.is_semantically_deterministic());
         assert!(ncw.remove_unreachable_states().is_empty());
