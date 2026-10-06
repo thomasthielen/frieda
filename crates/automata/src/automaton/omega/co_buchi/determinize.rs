@@ -7,7 +7,8 @@ use crate::core::{
 use crate::games::{ParityGame, Player};
 use crate::ts::{Shrinkable, Sproutable};
 use crate::{Automaton, TransitionSystem};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::Hash;
 
 impl<A, Q, D> Automaton<A, CoBuchiCondition, Q, bool, D, true, true>
 where
@@ -16,8 +17,8 @@ where
     D: TransitionSystem<Alphabet = A, StateColor = Q, EdgeColor = bool>,
 {
     /// Computes the language containment relation between the states of `self`, which is
-    /// assumed to be a GFG-tNCW. 
-    /// The result contains the pair `(q, s)` iff `L(A^q) ⊆ L(A^s)`, 
+    /// assumed to be a GFG-tNCW.
+    /// The result contains the pair `(q, s)` iff `L(A^q) ⊆ L(A^s)`,
     /// where `A^q` is `self` with initial state `q`.
     ///
     /// Following \[KS15, Theorem 13\], containment is decided with the game `G(A^s, A^q)`,
@@ -29,9 +30,9 @@ where
     /// and the game continues in `(p', r')`. Duplicator wins a play iff her run (from `s`) is
     /// accepting or Spoiler's run (from `q`) is rejecting, i.e. iff Spoiler's run takes
     /// `α`-transitions infinitely often whenever Duplicator's run does. This is a parity
-    /// condition with three priorities, and all pairs are decided at once by solving a single
-    /// [`ParityGame`]. To keep the arena total, missing transitions are treated as
-    /// `α`-transitions into an implicit rejecting sink.
+    /// condition with three priorities (see `Vertex`), and all pairs are decided at once by
+    /// solving a single [`ParityGame`]. To keep the arena total, missing transitions are
+    /// treated as `α`-transitions into an implicit rejecting sink.
     ///
     /// If Duplicator wins, then `L(A^q) ⊆ L(A^s)` holds regardless of GFGness. The converse
     /// (and hence exactness of the relation) requires that `A^s` is GFG: Duplicator then wins
@@ -50,96 +51,76 @@ where
                 .collect();
         }
 
-        // states are numbered `0..n`, the implicit rejecting sink is `n`
-        let n = states.len();
-        let m = n + 1;
-        let sink = n;
-        let state_number: BTreeMap<D::StateIndex, usize> =
-            states.iter().enumerate().map(|(i, &q)| (q, i)).collect();
-        let letter_number: BTreeMap<_, usize> =
-            letters.iter().enumerate().map(|(i, &a)| (a, i)).collect();
-
-        // successors[p][a] contains all `(color, p')` with `⟨p, a, p'⟩` in δ (`color` is
-        // `true` iff it is an `α`-transition), using the sink if there are none
-        let mut successors = vec![vec![Vec::new(); letters.len()]; m];
-        for (p, &q) in states.iter().enumerate() {
+        // all `(is_α, p')` with `⟨p, a, p'⟩` in δ, where `None` is the implicit rejecting sink
+        let mut transitions: HashMap<(Option<D::StateIndex>, A::Symbol), Vec<_>> = HashMap::new();
+        for &q in &states {
             for (_, sym, color, target) in self.transitions_from(q) {
-                successors[p][letter_number[&sym]].push((color, state_number[&target]));
+                transitions
+                    .entry((Some(q), sym))
+                    .or_default()
+                    .push((color, Some(target)));
             }
         }
-        for per_letter in successors.iter_mut() {
-            for succs in per_letter.iter_mut() {
-                if succs.is_empty() {
-                    succs.push((true, sink));
-                }
-            }
-        }
-
-        // Vertices of the game (`p` is Duplicator's state, `r` Spoiler's):
-        // - `choose_letter(p, r, k)`: Spoiler picks a letter. `k` is the priority of the round
-        //   that led here: 2 if Spoiler took an `α`-transition, otherwise 1 if Duplicator took
-        //   one, otherwise 0. Duplicator (Even) wins iff the greatest priority seen infinitely
-        //   often is even, i.e. iff `Inf(α_p) → Inf(α_r)`.
-        // - `duplicator_moves(p, r, a)`: Duplicator picks an `a`-successor of `p`.
-        // - `spoiler_moves(p', c, r, a)`: Spoiler picks an `a`-successor of `r`, where `c` is
-        //   the color of the transition Duplicator just took to reach `p'`.
-        let l = letters.len();
-        let choose_letter = |p: usize, r: usize, k: usize| (p * m + r) * 3 + k;
-        let duplicator_base = m * m * 3;
-        let duplicator_moves = |p: usize, r: usize, a: usize| duplicator_base + (p * m + r) * l + a;
-        let spoiler_base = duplicator_base + m * m * l;
-        let spoiler_moves = |p: usize, c: bool, r: usize, a: usize| {
-            spoiler_base + ((p * 2 + c as usize) * m + r) * l + a
+        let into_sink = [(true, None)];
+        let successors = |p, a| {
+            transitions
+                .get(&(p, a))
+                .map_or(&into_sink[..], Vec::as_slice)
         };
 
-        let mut game = ParityGame::new();
-        for _ in 0..m * m {
-            for k in 0..3 {
-                game.add_vertex(Player::Odd, k);
+        // Duplicator plays in `A^s`, Spoiler in `A^q` (as we check for `L(A^q) ⊆ L(A^s)`).
+        // Whether the initial vertex has priority 0 or 2 (spo_alpha = true) is irrelevant,
+        // as the winning condition is prefix-independent
+        let initial = |q, s| Vertex::ChooseLetter {
+            dup: Some(s),
+            spo: Some(q),
+            spo_alpha: false,
+        };
+
+        let mut arena = Arena::new();
+        for &q in &states {
+            for &s in &states {
+                arena.vertex(initial(q, s));
             }
         }
-        for _ in 0..m * m * l {
-            game.add_vertex(Player::Even, 0);
-        }
-        for _ in 0..m * 2 * m * l {
-            game.add_vertex(Player::Odd, 0);
-        }
-
-        for (p, per_letter) in successors.iter().enumerate() {
-            for r in 0..m {
-                for (a, succs) in per_letter.iter().enumerate() {
-                    for k in 0..3 {
-                        game.add_edge(choose_letter(p, r, k), duplicator_moves(p, r, a));
+        while let Some((v, source)) = arena.unexplored.pop() {
+            match v {
+                Vertex::ChooseLetter { dup, spo, .. } => {
+                    for &letter in &letters {
+                        arena.edge(source, Vertex::DuplicatorMoves { dup, spo, letter });
                     }
-                    for &(c, p_next) in succs {
-                        game.add_edge(duplicator_moves(p, r, a), spoiler_moves(p_next, c, r, a));
+                }
+                Vertex::DuplicatorMoves { dup, spo, letter } => {
+                    for &(dup_alpha, dup) in successors(dup, letter) {
+                        let target = Vertex::SpoilerMoves {
+                            dup,
+                            dup_alpha,
+                            spo,
+                            letter,
+                        };
+                        arena.edge(source, target);
+                    }
+                }
+                Vertex::SpoilerMoves {
+                    dup, spo, letter, ..
+                } => {
+                    for &(spo_alpha, spo) in successors(spo, letter) {
+                        let target = Vertex::ChooseLetter {
+                            dup,
+                            spo,
+                            spo_alpha,
+                        };
+                        arena.edge(source, target);
                     }
                 }
             }
         }
-        for p_next in 0..m {
-            for c in [false, true] {
-                for (r, per_letter) in successors.iter().enumerate() {
-                    for (a, succs) in per_letter.iter().enumerate() {
-                        for &(d, r_next) in succs {
-                            let k = if d { 2 } else { c as usize };
-                            game.add_edge(
-                                spoiler_moves(p_next, c, r, a),
-                                choose_letter(p_next, r_next, k),
-                            );
-                        }
-                    }
-                }
-            }
-        }
 
-        let winner = game.solve();
+        let winner = arena.game.solve();
         let mut relation = BTreeSet::new();
-        for (qi, &q) in states.iter().enumerate() {
-            for (si, &s) in states.iter().enumerate() {
-                // Duplicator plays in `A^s`, Spoiler in `A^q`; the priority of the initial
-                // vertex is irrelevant, as the winning condition is prefix-independent
-                if winner[choose_letter(si, qi, 0)] == Player::Even {
+        for &q in &states {
+            for &s in &states {
+                if winner[arena.index[&initial(q, s)]] == Player::Even {
                     relation.insert((q, s));
                 }
             }
@@ -216,6 +197,95 @@ where
                 }
             }
         }
+    }
+}
+
+/// A vertex of the containment game `G(A^s, A^q)`, where `dup` and `spo` are the current states
+/// of Duplicator and Spoiler, respectively, and `None` is the implicit rejecting sink.
+///
+/// A round visits [`Vertex::ChooseLetter`], [`Vertex::DuplicatorMoves`] and
+/// [`Vertex::SpoilerMoves`] in this order. Its greatest priority is 2 if Spoiler took an
+/// `α`-transition, otherwise 1 if Duplicator took one, and otherwise 0. Hence, Duplicator
+/// ([`Player::Even`]) wins iff Spoiler takes `α`-transitions infinitely often whenever
+/// Duplicator does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum Vertex<S, L> {
+    /// Spoiler picks a letter. `spo_alpha` is `true` iff Spoiler's last transition was an
+    /// `α`-transition, which gives this vertex priority 2.
+    ChooseLetter {
+        dup: Option<S>,
+        spo: Option<S>,
+        spo_alpha: bool,
+    },
+    /// Duplicator picks a `letter`-transition from `dup`.
+    DuplicatorMoves {
+        dup: Option<S>,
+        spo: Option<S>,
+        letter: L,
+    },
+    /// Spoiler picks a `letter`-transition from `spo`. `dup_alpha` is `true` iff the transition
+    /// that Duplicator just took to `dup` is an `α`-transition, which gives this vertex
+    /// priority 1.
+    SpoilerMoves {
+        dup: Option<S>,
+        dup_alpha: bool,
+        spo: Option<S>,
+        letter: L,
+    },
+}
+
+impl<S, L> Vertex<S, L> {
+    fn owner(&self) -> Player {
+        match self {
+            Vertex::DuplicatorMoves { .. } => Player::Even,
+            Vertex::ChooseLetter { .. } | Vertex::SpoilerMoves { .. } => Player::Odd,
+        }
+    }
+    fn priority(&self) -> usize {
+        match *self {
+            Vertex::ChooseLetter { spo_alpha, .. } => 2 * spo_alpha as usize,
+            Vertex::DuplicatorMoves { .. } => 0,
+            Vertex::SpoilerMoves { dup_alpha, .. } => dup_alpha as usize,
+        }
+    }
+}
+
+/// A [`ParityGame`] whose arena is built on the fly, starting from the initial vertices.
+///
+/// Every [`Vertex`] is added to `game` the first time it is encountered, with `index` mapping
+/// it to its index in `game`. It is also pushed onto the stack `unexplored`, which will be
+/// popped until empty, adding the outgoing edges of each popped vertex (and thereby discovering
+/// new vertices), so that afterwards all reachable vertices and their edges are in `game`.
+struct Arena<S, L> {
+    game: ParityGame,
+    index: HashMap<Vertex<S, L>, usize>,
+    unexplored: Vec<(Vertex<S, L>, usize)>,
+}
+
+impl<S: Copy + Eq + Hash, L: Copy + Eq + Hash> Arena<S, L> {
+    fn new() -> Self {
+        Self {
+            game: ParityGame::new(),
+            index: HashMap::new(),
+            unexplored: Vec::new(),
+        }
+    }
+
+    /// Returns the index of `v` in the game, adding it first if necessary.
+    fn vertex(&mut self, v: Vertex<S, L>) -> usize {
+        if let Some(&i) = self.index.get(&v) {
+            return i;
+        }
+        let i = self.game.add_vertex(v.owner(), v.priority());
+        self.index.insert(v, i);
+        self.unexplored.push((v, i));
+        i
+    }
+
+    /// Adds an edge from the vertex with index `source` to `target`.
+    fn edge(&mut self, source: usize, target: Vertex<S, L>) {
+        let target = self.vertex(target);
+        self.game.add_edge(source, target);
     }
 }
 
