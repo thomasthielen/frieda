@@ -1,6 +1,6 @@
-//! Renders example automata to PNGs in `examples/graphs/` (also a quick manual smoke test for
-//! local library changes).
-//! Run with: cargo run --example render_graphs -p automata --features graphviz
+//! Laboratory: a general testing environment for experimenting with the library (e.g. the
+//! minimization algorithm). Rendered automata are written as PNGs to `examples/graphs/`.
+//! Run with: cargo run --example laboratory -p automata --features graphviz
 
 use automata::TransitionSystem;
 use automata::automaton::{DCW, NCW};
@@ -124,12 +124,12 @@ fn main() {
     save_graph("example_check_01", &example_check_01);
 
     let determinize = DCW::builder()
-    .with_edges([
-        (0, 'a', false, 0),
-        (0, 'b', true, 1),
-        (1, 'a', false, 1),
-        (1, 'b', true, 0),
-    ])
-    .into_dcw(0);
+        .with_edges([
+            (0, 'a', false, 0),
+            (0, 'b', true, 1),
+            (1, 'a', false, 1),
+            (1, 'b', true, 0),
+        ])
+        .into_dcw(0);
     save_graph("determinize", &determinize);
 }
