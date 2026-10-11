@@ -18,16 +18,6 @@ where
     /// assumed to be safe deterministic. The result contains the pair `(q, s)` iff
     /// `L_safe(A^q) ⊆ L_safe(A^s)`. Following \[AK22\], the safe language `L_safe(A^q)` is the set
     /// of infinite words that can be read from `q` without traversing an `α`-transition.
-    ///
-    /// Since `self` is safe deterministic, every state has at most one safe run on every word,
-    /// so this reduces to containment between deterministic safety automata \[AK22, Section
-    /// 3.2\]. First, the states with a nonempty safe language are computed as a greatest
-    /// fixpoint: these are the states with a safe transition to such a state. Then,
-    /// `L_safe(A^q) ⊈ L_safe(A^s)` iff there is a finite word `u` and a letter `σ` such that the
-    /// safe runs of `q` and `s` on `u` exist and end in states `p` and `r`, respectively, `p` has
-    /// a safe `σ`-transition to a state with a nonempty safe language, and `r` has no safe
-    /// `σ`-transition. The pairs for which this holds are computed as a least fixpoint,
-    /// simultaneously for all pairs of states.
     pub fn safe_containment_relation(&self) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
         debug_assert!(self.is_safe_deterministic());
         let states: Vec<D::StateIndex> = self.state_indices().collect();
@@ -47,6 +37,7 @@ where
 
         // states with a nonempty safe language, i.e. with an infinite safe run
         let mut live: BTreeSet<D::StateIndex> = states.iter().copied().collect();
+        // via greatest fixpoint: a state is live iff it has a safe successor that is live
         loop {
             let still_live: BTreeSet<D::StateIndex> = live
                 .iter()
@@ -59,7 +50,7 @@ where
             live = still_live;
         }
 
-        // pairs `(q, s)` with `L_safe(A^q) ⊈ L_safe(A^s)`
+        // pairs `(q, s)` with `L_safe(A^q) ⊈ L_safe(A^s)` - via least fixpoint
         let mut not_contained = BTreeSet::new();
         loop {
             let mut changed = false;
@@ -97,9 +88,6 @@ where
     /// to be a nice GFG-tNCW. Following \[AK22\], `q` is subsafe-equivalent to `s`, denoted
     /// `q ≤ s`, if `L(A^q) = L(A^s)` and `L_safe(A^q) ⊆ L_safe(A^s)`. The result contains the pair
     /// `(q, s)` iff `q ≤ s`.
-    ///
-    /// Language equivalence is decided with [`Self::gfg_containment_relation`] and safe language
-    /// containment with [`Self::safe_containment_relation`], so the same assumptions apply.
     pub fn subsafe_equivalence_relation(&self) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
         let contained = self.gfg_containment_relation();
         self.safe_containment_relation()
@@ -154,31 +142,21 @@ where
     }
 
     /// Safe-centralizes `self`, which is assumed to be a nice GFG-tNCW, by turning it into the
-    /// tNCW `B_S` of \[AK22, Section 3.2\] for a frontier `S`, in which the smallest state of
-    /// each ergodic SCC of `H` determines the component that is taken (see
-    /// [`Self::subsafe_equivalence_relation`] for the relation `≤` that `H` is based on).
-    /// Afterwards, `self` is a nice, safe-centralized and
-    /// `α`-homogenous GFG-tNCW equivalent to the original one \[AK22, Theorem 3.15\].
+    /// tNCW `B_S` of \[AK22, Section 3.2\], where the frontier `S` takes the component of the
+    /// smallest state of each ergodic SCC of `H` (see [`Self::subsafe_equivalence_relation`]).
+    /// Afterwards, `self` is a nice, safe-centralized and `α`-homogenous GFG-tNCW equivalent to
+    /// the original one \[AK22, Theorem 3.15\].
     ///
-    /// `B_S` keeps exactly the states in the safe components of `S`, and for each such state `q`
-    /// and letter `σ`:
-    /// - if `q` has a safe `σ`-transition, it is kept and all `σ`-labeled `α`-transitions of `q`
-    ///   are removed,
-    /// - otherwise, `q` gets an `σ`-labeled `α`-transition to every kept state that is
-    ///   equivalent to some `σ`-successor of `q`.
-    ///
-    /// Hence, for every `q` and `σ`, the `σ`-transitions of `q` are either all safe or all
-    /// `α`-transitions, i.e. `B_S` is `α`-homogenous. As `self` is normal, safe transitions stay
-    /// within their safe component, so no safe transition leads to a removed state. The initial
-    /// state is kept if it is in `S`, and is otherwise replaced by the smallest kept state `q'`
-    /// with `q_0 ≤ q'`, which exists by \[AK22, Lemma 3.8\]. The indices of all kept states are
-    /// unchanged.
+    /// Only the states of `S` are kept, with unchanged indices. For each kept `q` and letter `σ`,
+    /// a safe `σ`-transition of `q` is kept and its `σ`-labeled `α`-transitions are removed;
+    /// without one, `q` gets a `σ`-labeled `α`-transition to every kept state equivalent to some
+    /// `σ`-successor of `q`. If `q_0 ∉ S`, it is replaced by the smallest kept `q'` with
+    /// `q_0 ≤ q'` \[AK22, Lemma 3.8\].
     ///
     /// # Panics
     /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]), or if `B_S` is
-    /// nondeterministic but the transition system backing `self` is deterministic, as is the case
-    /// for a [`DCW`](super::DCW). Note that even for a deterministic `self`, `B_S` may be
-    /// nondeterministic.
+    /// nondeterministic but `self` is backed by a deterministic transition system (e.g. a
+    /// [`DCW`](super::DCW)).
     pub fn safe_centralize(&mut self)
     where
         D: Shrinkable + Sproutable,
@@ -187,9 +165,11 @@ where
             self.is_safe_deterministic(),
             "safe centralization requires a safe deterministic tNCW"
         );
-        let contained = self.gfg_containment_relation();
-        let equivalent = |q, s| contained.contains(&(q, s)) && contained.contains(&(s, q));
-        // as in `Self::subsafe_equivalence_relation`, but reusing `contained`
+        // L(A^q) ⊆ L(A^s)
+        let contained = self.gfg_containment_relation(); 
+        // L(A^q) = L(A^s)
+        let equivalent = |q, s| contained.contains(&(q, s)) && contained.contains(&(s, q)); 
+        // q ≤ s
         let subsafe: BTreeSet<_> = self
             .safe_containment_relation()
             .into_iter()
@@ -292,7 +272,7 @@ mod tests {
     use automata_core::upw;
 
     #[test]
-    fn ak22_figure_2_safe_containment() {
+    fn safe_containment() {
         // AK22, Example 3.1: the safe languages are `L_safe(q0) = (a + bc)^ω`,
         // `L_safe(q1) = c · L_safe(q0)` and `L_safe(q2) = a^ω`, so apart from the reflexive
         // pairs, only `L_safe(q2) ⊆ L_safe(q0)` holds
@@ -318,9 +298,6 @@ mod tests {
 
     #[test]
     fn safe_containment_with_empty_safe_languages() {
-        // state 0 has a safe transition, but only into state 1, which has no safe transitions
-        // at all, so both have an empty safe language and are contained in every state. State 2
-        // has the safe language `a^ω`, which is not contained in the empty ones.
         let ncw = NCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -330,10 +307,12 @@ mod tests {
             ])
             .into_ncw(0);
         let contained = ncw.safe_containment_relation();
+        // states 0 and 1 have empty safe languages, so they are contained in all states
         for s in 0..3 {
             assert!(contained.contains(&(0, s)));
             assert!(contained.contains(&(1, s)));
         }
+        // state 2 has a nonempty safe language, so it is only contained in itself
         assert!(contained.contains(&(2, 2)));
         assert!(!contained.contains(&(2, 0)));
         assert!(!contained.contains(&(2, 1)));
@@ -363,7 +342,7 @@ mod tests {
     }
 
     #[test]
-    fn ak22_figure_2_frontier() {
+    fn simple_frontier_example() {
         // AK22, Example 3.10: as all states are equivalent and `L_safe(q2) ⊆ L_safe(q0)`, we have
         // `q2 ≤ q0`, so `H({q2}, {q0, q1})` and the single frontier is `{{q0, q1}}`
         let dcw = ak22_figure_2();
@@ -381,11 +360,11 @@ mod tests {
     }
 
     #[test]
-    fn ak22_figure_1_frontier_picks_one_of_strongly_equivalent_components() {
+    fn frontier_picks_smallest_of_strongly_equivalent_components() {
         // AK22, Figure 1: the tDCW `A_fm` for "finitely many `b`s". Both states are
         // strongly-equivalent (safe language `a^ω`), but lie in different safe components
         // `{q0}` and `{q1}`, which are hence related by `H` in both directions. Only one of them
-        // may be in the frontier, and the one with the smaller state is taken.
+        // may be in the frontier, and the one with the smaller smallest state is taken.
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
@@ -395,6 +374,7 @@ mod tests {
             ])
             .into_dcw(0);
         let subsafe = dcw.subsafe_equivalence_relation();
+        // subsafe = {(0,0), (0,1), (1,0), (1,1)}
         assert_eq!(subsafe.len(), 4);
         assert_eq!(
             dcw.frontier_states(&subsafe)
@@ -436,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn ak22_figure_2_safe_centralizes_to_figure_4() {
+    fn ak22_safe_centralization_example() {
         // AK22, Example 3.10: the state q2 is removed, and every `α`-transition of q0 and q1
         // that is not overruled by a safe transition on the same letter is redirected to both
         // q0 and q1, as all states are equivalent
@@ -461,9 +441,11 @@ mod tests {
     }
 
     #[test]
-    fn ak22_figure_1_safe_centralizes_to_single_state() {
+    fn ak22_single_state_example() {
         // AK22, Figure 1: only the safe component {q0} is kept, and the `α`-transition on `b` is
         // redirected to q0 itself. The result is deterministic, so a `DCW` can represent it.
+        // Unlike in AK22, we start in q1: as {q1} is the removed component, this also checks that
+        // the initial state is moved to the strongly-equivalent q0.
         let mut dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 0),

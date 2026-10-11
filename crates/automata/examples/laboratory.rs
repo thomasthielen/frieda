@@ -10,6 +10,19 @@ use automata::hoa::{HoaString, input::pop_omega_automaton};
 use automata::ts::TSBuilder;
 use std::path::PathBuf;
 
+/// AK22, Figure 2
+const AK22_FIGURE_2: [(u32, char, bool, u32); 9] = [
+    (0, 'a', false, 0),
+    (0, 'b', false, 1),
+    (0, 'c', true, 2),
+    (1, 'a', true, 2),
+    (1, 'b', true, 2),
+    (1, 'c', false, 0),
+    (2, 'a', false, 2),
+    (2, 'b', true, 1),
+    (2, 'c', true, 0),
+];
+
 fn save_graph(name: &str, aut: &impl Dottable) {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/graphs");
     std::fs::create_dir_all(&dir).expect("failed to create graphs dir");
