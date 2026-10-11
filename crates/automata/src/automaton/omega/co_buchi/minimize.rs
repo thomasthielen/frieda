@@ -1,5 +1,5 @@
 //! Strong equivalence and safe minimization \[AK22, Section 3.3\].
-use super::CoBuchiCondition;
+use super::{CoBuchiCondition, NCW};
 use crate::core::{Color, alphabet::Alphabet};
 use crate::ts::{Shrinkable, Sproutable};
 use crate::{Automaton, TransitionSystem};
@@ -35,7 +35,9 @@ where
             .into_iter()
             .all(|(q, s)| q == s)
     }
+}
 
+impl<A: Alphabet, Q: Color> NCW<A, Q> {
     /// Safe-minimizes `self`, which is assumed to be a nice, safe-centralized and `α`-homogenous
     /// GFG-tNCW (as obtained by [`Self::safe_centralize`]), by turning it into the quotient tNCW
     /// `C` of \[AK22, Section 3.3\], in which strongly-equivalent states are merged (see
@@ -51,16 +53,15 @@ where
     /// depend on the choice of `q'` and `p'`. The initial state is replaced by the representative
     /// of its class.
     ///
+    /// As the `α`-transitions of the merged states are joined, `C` may be nondeterministic, even
+    /// if `self` is deterministic. Hence, this is only available on an [`NCW`]; use
+    /// [`DCW::into_safe_minimized`](super::DCW::into_safe_minimized) to safe-minimize a
+    /// [`DCW`](super::DCW).
+    ///
     /// # Panics
     /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]) or not
-    /// `α`-homogenous (see [`Self::is_alpha_homogeneous`]), or if `C` is nondeterministic but the
-    /// transition system backing `self` is deterministic, as is the case for a
-    /// [`DCW`](super::DCW). Note that even for a deterministic `self`, `C` may be
-    /// nondeterministic, as the `α`-transitions of the merged states are joined.
-    pub fn safe_minimize(&mut self)
-    where
-        D: Shrinkable + Sproutable,
-    {
+    /// `α`-homogenous (see [`Self::is_alpha_homogeneous`]).
+    pub fn safe_minimize(&mut self) {
         assert!(
             self.is_safe_deterministic(),
             "safe minimization requires a safe deterministic tNCW"
@@ -72,14 +73,14 @@ where
 
         // the representative of `[q]` is its smallest state, and `(q, s)` with `s ≤ q` is
         // visited first, as the pairs are ordered lexicographically
-        let mut representative: BTreeMap<D::StateIndex, D::StateIndex> = BTreeMap::new();
+        let mut representative: BTreeMap<_, _> = BTreeMap::new();
         for (q, s) in self.strong_equivalence_relation() {
             representative.entry(q).or_insert(s);
         }
         self.initial = representative[&self.initial];
 
-        let states: Vec<D::StateIndex> = self.state_indices().collect();
-        let mut quotient: BTreeMap<D::StateIndex, BTreeSet<_>> = BTreeMap::new();
+        let states: Vec<_> = self.state_indices().collect();
+        let mut quotient: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
         for q in states {
             let edges = self
                 .remove_edges_from(q)
@@ -91,7 +92,7 @@ where
             }
         }
 
-        let removed: Vec<D::StateIndex> = representative
+        let removed: Vec<_> = representative
             .iter()
             .filter(|(q, s)| q != s)
             .map(|(&q, _)| q)
@@ -100,17 +101,8 @@ where
             self.remove_state(q);
         }
 
-        for (q, edges) in quotient {
-            let expected = edges.len();
-            for edge in edges {
-                self.add_edge(edge);
-            }
-            assert_eq!(
-                self.edges_from(q).expect("state is kept").count(),
-                expected,
-                "safe minimization introduces nondeterminism, which the deterministic transition \
-                 system backing this automaton cannot represent"
-            );
+        for edge in quotient.into_values().flatten() {
+            self.add_edge(edge);
         }
     }
 }
@@ -184,8 +176,8 @@ mod tests {
     fn safe_minimize_merges_strongly_equivalent_states_in_one_safe_component() {
         // unlike in AK22, Figure 1, the strongly-equivalent states 0 and 1 are in the same safe
         // component, so safe centralization keeps both and safe minimization merges them. The
-        // result is deterministic, so a `DCW` can represent it.
-        let mut dcw = DCW::builder()
+        // result happens to be deterministic, so it can be turned back into a `DCW`.
+        let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
                 (0, 'b', true, 0),
@@ -198,7 +190,10 @@ mod tests {
         let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
         let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
 
-        dcw.safe_minimize();
+        let dcw = dcw
+            .into_safe_minimized()
+            .try_into_dcw()
+            .expect("the result is deterministic");
         assert_eq!(dcw.initial(), 0);
         assert_eq!(dcw.state_indices().collect::<Vec<_>>(), vec![0]);
         assert_eq!(
@@ -253,10 +248,16 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "deterministic transition system")]
-    fn safe_minimize_panics_if_dcw_cannot_represent_result() {
-        let mut dcw = DCW::builder().with_edges(SPLIT_FIGURE_4).into_dcw(0);
-        dcw.safe_minimize();
+    fn safe_minimize_dcw_into_nondeterministic_ncw() {
+        // `SPLIT_FIGURE_4` is deterministic, but merging 0 and 2 joins their `α`-transitions on
+        // `c`, so the result cannot be turned back into a `DCW`
+        let ncw = DCW::builder()
+            .with_edges(SPLIT_FIGURE_4)
+            .into_dcw(0)
+            .into_safe_minimized();
+        assert!(sorted_transitions(&ncw).contains(&(0, 'c', true, 0)));
+        assert!(sorted_transitions(&ncw).contains(&(0, 'c', true, 1)));
+        assert!(ncw.try_into_dcw().is_err());
     }
 
     #[test]

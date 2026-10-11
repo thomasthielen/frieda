@@ -1,6 +1,6 @@
 use crate::automaton::Semantics;
 use crate::core::{Color, alphabet::Alphabet};
-use crate::ts::{Deterministic, Shrinkable, Sproutable, StateColor};
+use crate::ts::{Deterministic, Shrinkable, StateColor};
 use crate::{Automaton, DTS, NTS, TransitionSystem, automaton::InfiniteWordAutomaton, ts::run};
 use automata_core::Void;
 use automata_core::alphabet::CharAlphabet;
@@ -67,12 +67,80 @@ impl<A: Alphabet, Q: Color> DCW<A, Q> {
     /// backing transition system is only reinterpreted as nondeterministic, so no state indices
     /// change.
     ///
-    /// This is needed before applying transformations that may introduce nondeterminism, such as
-    /// [`NCW::safe_centralize`], which the deterministic transition system backing a [`DCW`]
-    /// cannot represent.
+    /// Following \[AK22\], every tDCW is a tNCW without nondeterministic choices, so this loses
+    /// nothing. It is needed before applying transformations whose result may be
+    /// nondeterministic, such as [`NCW::safe_centralize`], which are therefore only available on
+    /// an [`NCW`]. See also [`Self::into_safe_centralized`], [`Self::into_safe_minimized`] and
+    /// [`Self::into_minimized`].
     pub fn into_ncw(self) -> NCW<A, Q> {
         let (ts, initial, acceptance) = self.into_parts();
         NCW::from_parts_with_acceptance(ts.into_nondeterministic(), initial, acceptance)
+    }
+
+    /// Safe-centralizes `self` as a tNCW, see [`Self::into_ncw`] and [`NCW::safe_centralize`].
+    /// The result may be nondeterministic, even though `self` is deterministic.
+    pub fn into_safe_centralized(self) -> NCW<A, Q> {
+        let mut ncw = self.into_ncw();
+        ncw.safe_centralize();
+        ncw
+    }
+
+    /// Safe-minimizes `self` as a tNCW, see [`Self::into_ncw`] and [`NCW::safe_minimize`]. The
+    /// result may be nondeterministic, even though `self` is deterministic.
+    pub fn into_safe_minimized(self) -> NCW<A, Q> {
+        let mut ncw = self.into_ncw();
+        ncw.safe_minimize();
+        ncw
+    }
+
+    /// Minimizes `self` as a tNCW, see [`Self::into_ncw`] and [`NCW::minimize`]. The result is a
+    /// minimal GFG-tNCW, which may be nondeterministic, even though `self` is deterministic.
+    pub fn into_minimized(self) -> NCW<A, Q> {
+        let mut ncw = self.into_ncw();
+        ncw.minimize();
+        ncw
+    }
+}
+
+impl<A: Alphabet, Q: Color> NCW<A, Q> {
+    /// Turns `self` into a [`DCW`] with the same states, transitions and initial state, if
+    /// `self` is deterministic. Otherwise, `self` is returned unchanged as the error. This is the
+    /// inverse of [`DCW::into_ncw`], and no state indices change.
+    pub fn try_into_dcw(self) -> Result<DCW<A, Q>, Self> {
+        let (ts, initial, acceptance) = self.into_parts();
+        match ts.try_into_deterministic() {
+            Ok(ts) => Ok(DCW::from_parts_with_acceptance(ts, initial, acceptance)),
+            Err(ts) => Err(NCW::from_parts_with_acceptance(ts, initial, acceptance)),
+        }
+    }
+
+    /// Minimizes `self`, which is assumed to be a GFG-tNCW whose states are all GFG, by applying
+    /// the steps of \[AK22\] in order:
+    /// 1. [`Self::semantically_determinize`] and [`Self::remove_unreachable_states`], followed by
+    ///    [`Self::normalize`], which make `self` nice \[AK22, Theorem 2.2\],
+    /// 2. [`Self::safe_centralize`], which makes it safe-centralized and `α`-homogenous
+    ///    \[AK22, Theorem 3.15\],
+    /// 3. [`Self::safe_minimize`], which makes it safe-minimal \[AK22, Theorem 3.20\].
+    ///
+    /// Afterwards, `self` is a nice, safe-centralized and safe-minimal GFG-tNCW equivalent to the
+    /// original one, and hence a minimal GFG-tNCW \[AK22, Theorem 3.6\]. The indices of the
+    /// remaining states are unchanged.
+    ///
+    /// As steps 2 and 3 may introduce nondeterminism, this is only available on an [`NCW`]; use
+    /// [`DCW::into_minimized`] to minimize a [`DCW`].
+    ///
+    /// # Panics
+    /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]).
+    pub fn minimize(&mut self) {
+        assert!(
+            self.is_safe_deterministic(),
+            "minimization requires a safe deterministic tNCW"
+        );
+        self.semantically_determinize();
+        self.remove_unreachable_states();
+        self.normalize();
+        self.safe_centralize();
+        self.safe_minimize();
     }
 }
 
@@ -120,44 +188,11 @@ where
     {
         self.trim()
     }
-
-    /// Minimizes `self`, which is assumed to be a GFG-tNCW whose states are all GFG, by applying
-    /// the steps of \[AK22\] in order:
-    /// 1. [`Self::semantically_determinize`] and [`Self::remove_unreachable_states`], followed by
-    ///    [`Self::normalize`], which make `self` nice \[AK22, Theorem 2.2\],
-    /// 2. [`Self::safe_centralize`], which makes it safe-centralized and `α`-homogenous
-    ///    \[AK22, Theorem 3.15\],
-    /// 3. [`Self::safe_minimize`], which makes it safe-minimal \[AK22, Theorem 3.20\].
-    ///
-    /// Afterwards, `self` is a nice, safe-centralized and safe-minimal GFG-tNCW equivalent to the
-    /// original one, and hence a minimal GFG-tNCW \[AK22, Theorem 3.6\]. The indices of the
-    /// remaining states are unchanged.
-    ///
-    /// # Panics
-    /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]), or if one of
-    /// the steps introduces nondeterminism but the transition system backing `self` is
-    /// deterministic, as is the case for a [`DCW`]. This may happen even if the minimal result is
-    /// deterministic, since [`Self::safe_centralize`] redirects `α`-transitions to all equivalent
-    /// states it keeps. Use [`DCW::into_ncw`] first to minimize a [`DCW`].
-    pub fn minimize(&mut self)
-    where
-        D: Shrinkable + Sproutable,
-    {
-        assert!(
-            self.is_safe_deterministic(),
-            "minimization requires a safe deterministic tNCW"
-        );
-        self.semantically_determinize();
-        self.remove_unreachable_states();
-        self.normalize();
-        self.safe_centralize();
-        self.safe_minimize();
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::ak22_examples::{AK22_FIGURE_2, AK22_FIGURE_4, sorted_transitions};
+    use super::ak22_examples::{AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_2, sorted_transitions};
     use super::{DCW, NCW};
     use crate::ts::TSBuilder;
     use crate::{Pointed, TransitionSystem};
@@ -434,8 +469,8 @@ mod tests {
         //   recolored during normalization,
         // - safe centralization then keeps only {0, 1}, which contains the smallest state,
         // - safe minimization merges 0 and 1.
-        // Safe centralization redirects the `α`-transitions on `b` to both 0 and 1, so the `DCW`
-        // must be turned into an `NCW` first, even though the result is deterministic again.
+        // Safe centralization redirects the `α`-transitions on `b` to both 0 and 1, so the
+        // intermediate result is nondeterministic, even though the final one is deterministic.
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -446,35 +481,31 @@ mod tests {
                 (2, 'b', true, 2),
             ])
             .into_dcw(2);
-        let mut ncw = dcw.clone().into_ncw();
-        ncw.minimize();
-        assert_eq!(ncw.initial(), 0);
+        let minimized = dcw
+            .clone()
+            .into_minimized()
+            .try_into_dcw()
+            .expect("the result is deterministic");
+        assert_eq!(minimized.initial(), 0);
         // the minimal tDCW for "finitely many `b`s", i.e. `A_fm` of AK22, Figure 1 after safe
         // centralization
         assert_eq!(
-            sorted_transitions(&ncw),
+            sorted_transitions(&minimized),
             vec![(0, 'a', false, 0), (0, 'b', true, 0)]
         );
         let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
         let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
+        let accepted_after: Vec<bool> = words.iter().map(|w| minimized.accepts(w)).collect();
+        assert_eq!(accepted, accepted_after);
         assert_eq!(accepted, vec![true, false, true, false]);
     }
 
     #[test]
-    #[should_panic(expected = "deterministic transition system")]
-    fn minimize_panics_on_dcw_if_intermediate_step_is_nondeterministic() {
-        // same automaton as in `minimize_needs_every_step`, without turning it into an `NCW`
-        let mut dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'b', true, 0),
-                (1, 'a', false, 0),
-                (1, 'b', true, 1),
-                (2, 'a', false, 0),
-                (2, 'b', true, 2),
-            ])
-            .into_dcw(2);
-        dcw.minimize();
+    fn minimize_ak22_figure_2_as_dcw_into_nondeterministic_ncw() {
+        // AK22, Figure 2 is a tDCW, but its minimal GFG-tNCW, Figure 4, is nondeterministic
+        let ncw = ak22_figure_2().into_minimized();
+        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
+        assert!(ncw.try_into_dcw().is_err());
     }
 
     #[test]

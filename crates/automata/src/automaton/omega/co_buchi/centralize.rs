@@ -1,5 +1,5 @@
 //! Safe language containment, frontiers and safe centralization \[AK22, Section 3.2\].
-use super::CoBuchiCondition;
+use super::{CoBuchiCondition, NCW};
 use crate::core::{
     Color,
     alphabet::{Alphabet, Expression},
@@ -141,6 +141,31 @@ where
             .collect()
     }
 
+    /// Returns `true` iff `self`, which is assumed to be a nice GFG-tNCW, is safe-centralized.
+    /// Following \[AK22\], this is the case if for all states `q` and `s` with `q ≤ s` (see
+    /// [`Self::subsafe_equivalence_relation`]), `q` and `s` are in the same safe component.
+    /// After [`Self::safe_centralize`], this holds.
+    pub fn is_safe_centralized(&self) -> bool {
+        let component = self.safe_component_indices();
+        self.subsafe_equivalence_relation()
+            .into_iter()
+            .all(|(q, s)| component[&q] == component[&s])
+    }
+
+    /// Returns `true` iff `self` is `α`-homogenous. Following \[AK22\], this is the case if for
+    /// every state `q` and symbol `σ`, the `σ`-transitions leaving `q` are either all safe
+    /// (colored `false`) or all `α`-transitions (colored `true`). After
+    /// [`Self::safe_centralize`], this holds.
+    pub fn is_alpha_homogeneous(&self) -> bool {
+        self.state_indices().all(|q| {
+            let mut colors: BTreeMap<A::Symbol, bool> = BTreeMap::new();
+            self.transitions_from(q)
+                .all(|(_, sym, color, _)| *colors.entry(sym).or_insert(color) == color)
+        })
+    }
+}
+
+impl<A: Alphabet, Q: Color> NCW<A, Q> {
     /// Safe-centralizes `self`, which is assumed to be a nice GFG-tNCW, by turning it into the
     /// tNCW `B_S` of \[AK22, Section 3.2\], where the frontier `S` takes the component of the
     /// smallest state of each ergodic SCC of `H` (see [`Self::subsafe_equivalence_relation`]).
@@ -153,22 +178,21 @@ where
     /// `σ`-successor of `q`. If `q_0 ∉ S`, it is replaced by the smallest kept `q'` with
     /// `q_0 ≤ q'` \[AK22, Lemma 3.8\].
     ///
+    /// As `B_S` may be nondeterministic, even if `self` is deterministic, this is only available
+    /// on an [`NCW`]; use [`DCW::into_safe_centralized`](super::DCW::into_safe_centralized) to
+    /// safe-centralize a [`DCW`](super::DCW).
+    ///
     /// # Panics
-    /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]), or if `B_S` is
-    /// nondeterministic but `self` is backed by a deterministic transition system (e.g. a
-    /// [`DCW`](super::DCW)).
-    pub fn safe_centralize(&mut self)
-    where
-        D: Shrinkable + Sproutable,
-    {
+    /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]).
+    pub fn safe_centralize(&mut self) {
         assert!(
             self.is_safe_deterministic(),
             "safe centralization requires a safe deterministic tNCW"
         );
         // L(A^q) ⊆ L(A^s)
-        let contained = self.gfg_containment_relation(); 
+        let contained = self.gfg_containment_relation();
         // L(A^q) = L(A^s)
-        let equivalent = |q, s| contained.contains(&(q, s)) && contained.contains(&(s, q)); 
+        let equivalent = |q, s| contained.contains(&(q, s)) && contained.contains(&(s, q));
         // q ≤ s
         let subsafe: BTreeSet<_> = self
             .safe_containment_relation()
@@ -219,46 +243,15 @@ where
                 }
             }
 
-            let expected = centralized.len();
             for edge in centralized {
                 self.add_edge(edge);
             }
-            assert_eq!(
-                self.edges_from(q).expect("state is kept").count(),
-                expected,
-                "safe centralization introduces nondeterminism, which the deterministic transition \
-                 system backing this automaton cannot represent"
-            );
         }
 
-        let removed: Vec<D::StateIndex> =
-            self.state_indices().filter(|q| !kept.contains(q)).collect();
+        let removed: Vec<_> = self.state_indices().filter(|q| !kept.contains(q)).collect();
         for q in removed {
             self.remove_state(q);
         }
-    }
-
-    /// Returns `true` iff `self`, which is assumed to be a nice GFG-tNCW, is safe-centralized.
-    /// Following \[AK22\], this is the case if for all states `q` and `s` with `q ≤ s` (see
-    /// [`Self::subsafe_equivalence_relation`]), `q` and `s` are in the same safe component.
-    /// After [`Self::safe_centralize`], this holds.
-    pub fn is_safe_centralized(&self) -> bool {
-        let component = self.safe_component_indices();
-        self.subsafe_equivalence_relation()
-            .into_iter()
-            .all(|(q, s)| component[&q] == component[&s])
-    }
-
-    /// Returns `true` iff `self` is `α`-homogenous. Following \[AK22\], this is the case if for
-    /// every state `q` and symbol `σ`, the `σ`-transitions leaving `q` are either all safe
-    /// (colored `false`) or all `α`-transitions (colored `true`). After
-    /// [`Self::safe_centralize`], this holds.
-    pub fn is_alpha_homogeneous(&self) -> bool {
-        self.state_indices().all(|q| {
-            let mut colors: BTreeMap<A::Symbol, bool> = BTreeMap::new();
-            self.transitions_from(q)
-                .all(|(_, sym, color, _)| *colors.entry(sym).or_insert(color) == color)
-        })
     }
 }
 
@@ -410,8 +403,7 @@ mod tests {
         );
 
         // hence, safe centralization changes nothing
-        let mut centralized = dcw.clone();
-        centralized.safe_centralize();
+        let centralized = dcw.clone().into_safe_centralized();
         assert_eq!(sorted_transitions(&centralized), sorted_transitions(&dcw));
     }
 
@@ -443,10 +435,11 @@ mod tests {
     #[test]
     fn ak22_single_state_example() {
         // AK22, Figure 1: only the safe component {q0} is kept, and the `α`-transition on `b` is
-        // redirected to q0 itself. The result is deterministic, so a `DCW` can represent it.
+        // redirected to q0 itself. The result happens to be deterministic, so it can be turned
+        // back into a `DCW`.
         // Unlike in AK22, we start in q1: as {q1} is the removed component, this also checks that
         // the initial state is moved to the strongly-equivalent q0.
-        let mut dcw = DCW::builder()
+        let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
                 (0, 'b', true, 1),
@@ -457,7 +450,10 @@ mod tests {
         let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
         let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
 
-        dcw.safe_centralize();
+        let dcw = dcw
+            .into_safe_centralized()
+            .try_into_dcw()
+            .expect("the result is deterministic");
         assert_eq!(dcw.initial(), 0);
         assert_eq!(
             sorted_transitions(&dcw),
@@ -469,21 +465,12 @@ mod tests {
     }
 
     #[test]
-    fn ak22_figure_2_as_dcw_safe_centralizes_after_into_ncw() {
-        // unlike in `safe_centralize_panics_if_dcw_cannot_represent_result`, converting the `DCW`
-        // first allows the nondeterministic `α`-transitions of Figure 4
-        let mut ncw = ak22_figure_2().into_ncw();
-        ncw.safe_centralize();
+    fn ak22_figure_2_as_dcw_safe_centralizes_to_nondeterministic_ncw() {
+        // AK22, Figure 2 is a tDCW, which is safe-centralized as a tNCW. The result `B_S` of
+        // Figure 4 has two `c`-transitions from q0, so it cannot be turned back into a `DCW`.
+        let ncw = ak22_figure_2().into_safe_centralized();
         assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
-    }
-
-    #[test]
-    #[should_panic(expected = "deterministic transition system")]
-    fn safe_centralize_panics_if_dcw_cannot_represent_result() {
-        // AK22, Figure 2 as a `DCW`: `B_S` has two `c`-transitions from q0, which the
-        // deterministic backing transition system cannot represent
-        let mut dcw = ak22_figure_2();
-        dcw.safe_centralize();
+        assert!(ncw.try_into_dcw().is_err());
     }
 
     #[test]
@@ -514,7 +501,7 @@ mod tests {
 
         // AK22, Example 3.1: Figure 1 is not safe-centralized, as its two states are
         // strongly-equivalent but in different safe components
-        let mut dcw = DCW::builder()
+        let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
                 (0, 'b', true, 1),
@@ -523,9 +510,9 @@ mod tests {
             ])
             .into_dcw(0);
         assert!(!dcw.is_safe_centralized());
-        dcw.safe_centralize();
-        assert!(dcw.is_safe_centralized());
-        assert!(dcw.is_alpha_homogeneous());
+        let ncw = dcw.into_safe_centralized();
+        assert!(ncw.is_safe_centralized());
+        assert!(ncw.is_alpha_homogeneous());
     }
 
     #[test]
