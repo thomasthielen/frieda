@@ -133,8 +133,7 @@ mod tests {
 
     #[test]
     fn ak22_figure_1_strong_equivalence() {
-        // AK22, Example 3.1: the two states of `A_fm` are strongly-equivalent, so it is not
-        // safe-minimal
+        // AK22, Example 3.1: the two states are strongly-equivalent, so it is not safe-minimal
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
@@ -149,8 +148,7 @@ mod tests {
 
     #[test]
     fn ak22_figure_2_is_safe_minimal() {
-        // AK22, Example 3.1: all states of Figure 2 differ in their safe languages, even though
-        // `q2 ≤ q0`
+        // AK22, Example 3.1: all states of Figure 2 differ in their safe languages
         let dcw = ak22_figure_2();
         assert_eq!(
             dcw.strong_equivalence_relation()
