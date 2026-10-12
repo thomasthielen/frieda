@@ -79,6 +79,7 @@ pub trait Dottable: TransitionSystem {
             "digraph {} {{",
             self.dot_name().unwrap_or("A".to_string())
         ))
+        .chain(DOT_LAYOUT_DEFAULTS.iter().map(|s| s.to_string()))
         .chain(self.dot_header_statements());
 
         let states = self.state_indices().map(|q| {
@@ -103,21 +104,45 @@ pub trait Dottable: TransitionSystem {
             ]
         });
 
-        let transitions = self.state_indices().flat_map(|q| {
-            self.edges_from(q)
+        // parallel edges that agree on everything but their label (e.g. the same target and
+        // the same line style) are merged into a single edge whose label lists all of them
+        let mut merged: indexmap::IndexMap<(String, String, Vec<String>), Vec<String>> =
+            indexmap::IndexMap::new();
+        for q in self.state_indices() {
+            for t in self
+                .edges_from(q)
                 .expect("edges_from may not return none for state that exists")
-                .map(move |t| {
-                    format!(
-                        "{} -> {} [{}]",
-                        sanitize_dot_ident(&self.dot_state_ident(q)),
-                        sanitize_dot_ident(&self.dot_state_ident(t.target())),
-                        self.dot_transition_attributes(t)
-                            .into_iter()
-                            .map(|attr| attr.to_string())
-                            .join(", ")
-                    )
-                })
-        });
+            {
+                let target = sanitize_dot_ident(&self.dot_state_ident(t.target()));
+                let (labels, others): (Vec<_>, Vec<_>) = self
+                    .dot_transition_attributes(t)
+                    .into_iter()
+                    .partition(|attr| matches!(attr, DotTransitionAttribute::Label(_)));
+                let key = (
+                    sanitize_dot_ident(&self.dot_state_ident(q)),
+                    target,
+                    others.iter().map(|attr| attr.to_string()).collect(),
+                );
+                merged
+                    .entry(key)
+                    .or_default()
+                    .extend(labels.into_iter().map(|attr| match attr {
+                        DotTransitionAttribute::Label(lbl) => lbl,
+                        _ => unreachable!("only labels remain after partitioning"),
+                    }));
+            }
+        }
+        let transitions = merged
+            .into_iter()
+            .map(|((source, target, others), mut labels)| {
+                labels.sort();
+                let label = (!labels.is_empty())
+                    .then(|| DotTransitionAttribute::Label(labels.join(", ")).to_string());
+                format!(
+                    "{source} -> {target} [{}]",
+                    label.into_iter().chain(others).join(", ")
+                )
+            });
 
         let mut lines = header
             .chain(states)
@@ -569,6 +594,16 @@ fn display_png(contents: Vec<u8>) -> Result<(), RenderError> {
 
     Ok(())
 }
+
+/// Layout statements emitted at the top of every DOT graph. They can be overridden through
+/// [`Dottable::dot_header_statements`], which is emitted afterwards.
+const DOT_LAYOUT_DEFAULTS: &[&str] = &[
+    "rankdir=LR",
+    "nodesep=0.5",
+    "ranksep=0.8",
+    "node [shape=circle, fontname=\"Helvetica\"]",
+    "edge [fontname=\"Helvetica\", fontsize=11, arrowsize=0.7]",
+];
 
 /// Identifier of the dummy node the arrow into the initial state originates from.
 const DOT_INITIAL_IDENT: &str = "__init";
