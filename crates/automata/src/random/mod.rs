@@ -1,5 +1,5 @@
 #![allow(unused)]
-use crate::automaton::{DBA, DFA, DPA, MealyMachine, MooreMachine};
+use crate::automaton::{DBA, DCW, DFA, DPA, MealyMachine, MooreMachine, NCW};
 use crate::representation::IntoTs;
 use crate::ts::{DefaultIdType, Deterministic, ForAlphabet, Shrinkable, Sproutable, StateIndex};
 use crate::{DTS, TransitionSystem};
@@ -7,8 +7,9 @@ use automata_core::alphabet::{Alphabet, CharAlphabet};
 use automata_core::word::ReducedOmegaWord;
 use automata_core::{Int, Void, math, upw};
 use math::sample_continuous_bernoulli;
-use rand::{Rng, rngs::ThreadRng, thread_rng};
+use rand::{Rng, rngs::ThreadRng, seq::SliceRandom, thread_rng};
 use std::cmp::min;
+use std::collections::BTreeMap;
 use tracing::{debug, info};
 
 /// Uses sprout-like algorithm to generate a random transition system. `symbols` determines the
@@ -152,6 +153,85 @@ pub fn generate_random_dpa(symbols: usize, size: usize, num_prios: Int, lambda: 
     dts.map_edge_colors(|_| draw_priority(num_prios, lambda))
         .with_initial(initial)
         .into_dpa()
+}
+
+/// Generates a random [`DCW`] in the manner of [`generate_random_ts_sized`]: starting with `size`
+/// states, for each state and each of the `symbols` symbols a target state is drawn uniformly,
+/// and the edge is made an `α`-transition with probability `alpha_probability`. Afterwards,
+/// unreachable states are removed, so the resulting DCW may be smaller than `size`.
+///
+/// All randomness is drawn from `rng`, so the result is reproducible for a seeded `rng`.
+pub fn generate_random_dcw(
+    symbols: usize,
+    size: usize,
+    alpha_probability: f64,
+    rng: &mut impl Rng,
+) -> DCW {
+    assert!(size > 0);
+    let alphabet = CharAlphabet::of_size(symbols);
+    let mut dts: DTS<CharAlphabet, Void, bool> = DTS::for_alphabet(alphabet.clone());
+    for _ in 0..size {
+        dts.add_state(Void);
+    }
+    for q in dts.state_indices_vec() {
+        for sym in alphabet.universe() {
+            let target = rng.gen_range(0..(size as DefaultIdType));
+            dts.add_edge((q, sym, rng.gen_bool(alpha_probability), target));
+        }
+    }
+    dts.trim_from(0);
+    DCW::from_parts(dts, 0)
+}
+
+/// Generates a random safe deterministic GFG-[`NCW`], which is a valid input for
+/// [`NCW::minimize`]. It starts from a random DCW drawn by [`generate_random_dcw`] and, for each
+/// of its transitions `⟨q, σ, s⟩`, with probability `nondeterminism` adds an `α`-transition
+/// `⟨q, σ, p⟩` to a state `p ≠ s` drawn uniformly from those with `L(p) ⊆ L(s)`. If there is no
+/// such `p`, no transition is added.
+///
+/// The added transitions neither change the language nor the GFGness of any state: an accepting
+/// run takes the (`α`-colored) added transitions only finitely often, and the last one,
+/// `⟨q, σ, p⟩`, can be replaced by `⟨q, σ, s⟩`, as the run continues in the DCW from `p` and
+/// `L(p) ⊆ L(s)`. Hence, the strategy that ignores all added transitions witnesses GFGness from
+/// every state. As only `α`-transitions are added, the result stays safe deterministic. Added
+/// transitions to a `p` with `L(p) ⊊ L(s)` are not covering and are thus removed again by
+/// [`NCW::semantically_determinize`], whereas those with `L(p) = L(s)` are kept.
+///
+/// All randomness is drawn from `rng`, so the result is reproducible for a seeded `rng`.
+pub fn generate_random_ncw(
+    symbols: usize,
+    size: usize,
+    alpha_probability: f64,
+    nondeterminism: f64,
+    rng: &mut impl Rng,
+) -> NCW {
+    let dcw = generate_random_dcw(symbols, size, alpha_probability, rng);
+    // exact, as every state of a DCW is GFG
+    let mut contained_in: BTreeMap<DefaultIdType, Vec<DefaultIdType>> = BTreeMap::new();
+    for (p, s) in dcw.gfg_containment_relation() {
+        if p != s {
+            contained_in.entry(s).or_default().push(p);
+        }
+    }
+    let transitions: Vec<_> = dcw
+        .state_indices()
+        .flat_map(|q| {
+            dcw.transitions_from(q)
+                .map(|(q, sym, _, s)| (q, sym, s))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+
+    let mut ncw = dcw.into_ncw();
+    for (q, sym, s) in transitions {
+        if !rng.gen_bool(nondeterminism) {
+            continue;
+        }
+        if let Some(&p) = contained_in.get(&s).and_then(|ps| ps.choose(rng)) {
+            ncw.add_edge((q, sym, true, p));
+        }
+    }
+    ncw
 }
 
 /// Randomly draw a priority in range [0,num_prios) from continuous Bernoulli distribution
@@ -353,14 +433,16 @@ pub(crate) fn print_random_ts_benchmark(
 #[cfg(test)]
 mod tests {
     use super::{
-        generate_random_dba, generate_random_dfa, generate_random_dpa, generate_random_omega_words,
-        generate_random_ts_sized, generate_random_words, print_random_ts_benchmark,
+        generate_random_dba, generate_random_dcw, generate_random_dfa, generate_random_dpa,
+        generate_random_ncw, generate_random_omega_words, generate_random_ts_sized,
+        generate_random_words, print_random_ts_benchmark,
     };
     use crate::{
         TransitionSystem,
         dot::Dottable,
         random::{CharAlphabet, draw_priority},
     };
+    use rand::{SeedableRng, rngs::StdRng};
     use std::collections::HashMap;
 
     #[test]
@@ -386,6 +468,45 @@ mod tests {
     fn random_dpa_sized() {
         let dpa = generate_random_dpa(2, 10, 3, 0.5);
         assert!(dpa.size() <= 10);
+    }
+
+    #[test]
+    fn random_dcw_sized() {
+        let mut rng = StdRng::seed_from_u64(0);
+        let dcw = generate_random_dcw(2, 10, 0.3, &mut rng);
+        assert!(dcw.size() <= 10);
+    }
+
+    #[test]
+    fn random_ncw_is_valid_minimization_input() {
+        let mut nondeterministic = 0;
+        for seed in 0..20 {
+            // the NCW is built on top of the DCW drawn from the same seed
+            let dcw = generate_random_dcw(2, 8, 0.3, &mut StdRng::seed_from_u64(seed));
+            let ncw = generate_random_ncw(2, 8, 0.3, 0.5, &mut StdRng::seed_from_u64(seed));
+            assert!(ncw.size() <= 8);
+            assert!(ncw.is_safe_deterministic());
+            // the added transitions do not change the languages of the states
+            assert_eq!(
+                ncw.gfg_containment_relation(),
+                dcw.gfg_containment_relation()
+            );
+            if ncw.try_into_dcw().is_err() {
+                nondeterministic += 1;
+            }
+        }
+        assert!(nondeterministic > 0);
+    }
+
+    #[test]
+    fn random_ncw_is_reproducible() {
+        let draw = |seed| {
+            let ncw = generate_random_ncw(3, 12, 0.3, 0.5, &mut StdRng::seed_from_u64(seed));
+            ncw.state_indices()
+                .flat_map(|q| ncw.transitions_from(q).collect::<Vec<_>>())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(draw(7), draw(7));
     }
 
     #[test]
