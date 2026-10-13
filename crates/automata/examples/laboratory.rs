@@ -114,26 +114,6 @@ fn main() {
     ncw.semantically_determinize();
     save_graph("ncw_test_semantically_determinized", &ncw);
 
-    let example_check_01 = DCW::builder()
-        .with_edges([
-            (0, 'a', true, 1),
-            (0, 'b', false, 0),
-            (1, 'a', true, 1),
-            (1, 'b', false, 0),
-        ])
-        .into_dcw(0);
-    save_graph("example_check_01", &example_check_01);
-
-    let determinize = DCW::builder()
-        .with_edges([
-            (0, 'a', false, 0),
-            (0, 'b', true, 1),
-            (1, 'a', false, 1),
-            (1, 'b', true, 0),
-        ])
-        .into_dcw(0);
-    save_graph("determinize", &determinize);
-
     full_pipeline_example();
 }
 
