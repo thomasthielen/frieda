@@ -7,7 +7,7 @@ use crate::core::{
 use crate::games::{ParityGame, Player};
 use crate::ts::{Shrinkable, Sproutable};
 use crate::{Automaton, TransitionSystem};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
 use std::hash::Hash;
 
 impl<A, Q, D> Automaton<A, CoBuchiCondition, Q, bool, D, true, true>
@@ -172,6 +172,19 @@ where
         D: Shrinkable + Sproutable,
     {
         let contained = self.gfg_containment_relation();
+        self.semantically_determinize_with(&contained);
+    }
+
+    /// Does the same as [`Self::semantically_determinize`], but decides covering with the given
+    /// containment relation `contained` (as computed by [`Self::gfg_containment_relation`])
+    /// instead of computing it, so that [`NCW::minimize`](super::NCW::minimize) can reuse it
+    /// for the later steps.
+    pub(super) fn semantically_determinize_with(
+        &mut self,
+        contained: &BTreeSet<(D::StateIndex, D::StateIndex)>,
+    ) where
+        D: Shrinkable + Sproutable,
+    {
         let states: Vec<D::StateIndex> = self.state_indices().collect();
         for q in states {
             let mut successors: BTreeMap<_, BTreeSet<D::StateIndex>> = BTreeMap::new();
@@ -197,6 +210,62 @@ where
                 }
             }
         }
+    }
+}
+
+/// The partition of the states of a GFG-tNCW into classes of language-equivalent states, i.e.
+/// `q` and `s` are in the same class iff `L(A^q) = L(A^s)`. Each state is mapped to the smallest
+/// state of its class, which identifies the class.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LanguageClasses<S>(BTreeMap<S, S>);
+
+impl<S: Ord + Copy> LanguageClasses<S> {
+    /// Builds the partition of `states` from the containment relation `contained` (see
+    /// [`Automaton::gfg_containment_relation`]), where `q` and `s` are equivalent if they are
+    /// connected by a chain of mutually contained states. As the containment relation never
+    /// contains a wrong pair, every such chain witnesses a real equivalence, so this is exact
+    /// whenever `contained` is, and may only find more equivalences otherwise.
+    pub(super) fn from_containment(
+        contained: &BTreeSet<(S, S)>,
+        states: impl IntoIterator<Item = S>,
+    ) -> Self {
+        let mut mutual: BTreeMap<S, Vec<S>> = states.into_iter().map(|q| (q, vec![])).collect();
+        for &(q, s) in contained {
+            if q != s
+                && mutual.contains_key(&s)
+                && contained.contains(&(s, q))
+                && let Some(equivalent) = mutual.get_mut(&q)
+            {
+                equivalent.push(s);
+            }
+        }
+
+        let mut class = BTreeMap::new();
+        // the states are visited in ascending order, so `q` is the smallest state of its class
+        for &q in mutual.keys() {
+            if class.contains_key(&q) {
+                continue;
+            }
+            class.insert(q, q);
+            let mut stack = vec![q];
+            while let Some(p) = stack.pop() {
+                for &s in &mutual[&p] {
+                    if let Entry::Vacant(entry) = class.entry(s) {
+                        entry.insert(q);
+                        stack.push(s);
+                    }
+                }
+            }
+        }
+        Self(class)
+    }
+
+    /// Returns `true` iff `q` and `s` are in the same class.
+    ///
+    /// # Panics
+    /// If `q` or `s` was not among the states the partition was built from.
+    pub(super) fn equivalent(&self, q: S, s: S) -> bool {
+        self.0[&q] == self.0[&s]
     }
 }
 

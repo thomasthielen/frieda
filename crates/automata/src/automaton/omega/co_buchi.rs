@@ -13,6 +13,8 @@ mod determinize;
 mod minimize;
 mod normalize;
 
+use determinize::LanguageClasses;
+
 #[cfg(test)]
 mod ak22_examples;
 
@@ -126,6 +128,12 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
     /// original one, and hence a minimal GFG-tNCW \[AK22, Theorem 3.6\]. The indices of the
     /// remaining states are unchanged.
     ///
+    /// Unlike calling the steps one by one, the containment game (see
+    /// [`Self::gfg_containment_relation`]) is solved only once, before step 1. All later steps
+    /// keep the languages of the remaining states, so steps 2 and 3 reuse the resulting partition
+    /// into language-equivalent states, and step 3 reuses the subsafe-equivalence relation
+    /// computed in step 2 (see [`Self::subsafe_equivalence_relation`]).
+    ///
     /// As steps 2 and 3 may introduce nondeterminism, this is only available on an [`NCW`]; use
     /// [`DCW::into_minimized`] to minimize a [`DCW`].
     ///
@@ -136,11 +144,13 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
             self.is_safe_deterministic(),
             "minimization requires a safe deterministic tNCW"
         );
-        self.semantically_determinize();
+        let contained = self.gfg_containment_relation();
+        self.semantically_determinize_with(&contained);
         self.remove_unreachable_states();
         self.normalize();
-        self.safe_centralize();
-        self.safe_minimize();
+        let classes = LanguageClasses::from_containment(&contained, self.state_indices());
+        let subsafe = self.safe_centralize_with(&classes);
+        self.safe_minimize_with(&subsafe);
     }
 }
 
@@ -193,10 +203,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::ak22_examples::{AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_2, sorted_transitions};
-    use super::{DCW, NCW};
+    use super::{DCW, LanguageClasses, NCW};
+    use crate::random::generate_random_ncw;
     use crate::ts::TSBuilder;
     use crate::{Pointed, TransitionSystem};
     use automata_core::{Void, upw};
+    use rand::{SeedableRng, rngs::StdRng};
 
     #[test]
     fn dcws() {
@@ -506,6 +518,51 @@ mod tests {
         let ncw = ak22_figure_2().into_minimized();
         assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
         assert!(ncw.try_into_dcw().is_err());
+    }
+
+    #[test]
+    fn minimize_reuses_relations_correctly() {
+        // the relations reused by `minimize` agree with freshly computed ones after every step,
+        // and the result agrees with calling the steps one by one
+        for seed in 0..30 {
+            let input = generate_random_ncw(2, 10, 0.3, 0.5, &mut StdRng::seed_from_u64(seed));
+
+            let mut stepwise = input.clone();
+            stepwise.semantically_determinize();
+            stepwise.remove_unreachable_states();
+            stepwise.normalize();
+            stepwise.safe_centralize();
+            stepwise.safe_minimize();
+
+            let mut ncw = input.clone();
+            let contained = ncw.gfg_containment_relation();
+            ncw.semantically_determinize_with(&contained);
+            ncw.remove_unreachable_states();
+            ncw.normalize();
+            let classes = LanguageClasses::from_containment(&contained, ncw.state_indices());
+            assert_eq!(
+                classes,
+                LanguageClasses::from_containment(
+                    &ncw.gfg_containment_relation(),
+                    ncw.state_indices()
+                ),
+                "language classes changed during the first step for seed {seed}"
+            );
+            let subsafe = ncw.safe_centralize_with(&classes);
+            assert_eq!(
+                subsafe,
+                ncw.subsafe_equivalence_relation(),
+                "subsafe-equivalence changed during safe centralization for seed {seed}"
+            );
+            ncw.safe_minimize_with(&subsafe);
+            assert!(ncw.is_safe_minimal());
+            assert_eq!(ncw.initial(), stepwise.initial());
+            assert_eq!(sorted_transitions(&ncw), sorted_transitions(&stepwise));
+
+            let mut minimized = input;
+            minimized.minimize();
+            assert_eq!(sorted_transitions(&minimized), sorted_transitions(&ncw));
+        }
     }
 
     #[test]

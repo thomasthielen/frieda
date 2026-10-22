@@ -1,9 +1,19 @@
 //! Strong equivalence and safe minimization \[AK22, Section 3.3\].
 use super::{CoBuchiCondition, NCW};
 use crate::core::{Color, alphabet::Alphabet};
-use crate::ts::{Shrinkable, Sproutable};
+use crate::ts::{Shrinkable, Sproutable, StateIndex};
 use crate::{Automaton, TransitionSystem};
 use std::collections::{BTreeMap, BTreeSet};
+
+/// Returns the strong-equivalence relation `≈` given the subsafe-equivalence relation `≤`, as
+/// `q ≈ s` iff `q ≤ s` and `s ≤ q`.
+fn strong_equivalence<S: Ord + Copy>(subsafe: &BTreeSet<(S, S)>) -> BTreeSet<(S, S)> {
+    subsafe
+        .iter()
+        .copied()
+        .filter(|&(q, s)| subsafe.contains(&(s, q)))
+        .collect()
+}
 
 impl<A, Q, D> Automaton<A, CoBuchiCondition, Q, bool, D, true, true>
 where
@@ -19,12 +29,7 @@ where
     /// As `q ≈ s` iff `q ≤ s` and `s ≤ q`, this is derived from
     /// [`Self::subsafe_equivalence_relation`], so the same assumptions apply.
     pub fn strong_equivalence_relation(&self) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
-        let subsafe = self.subsafe_equivalence_relation();
-        subsafe
-            .iter()
-            .copied()
-            .filter(|&(q, s)| subsafe.contains(&(s, q)))
-            .collect()
+        strong_equivalence(&self.subsafe_equivalence_relation())
     }
 
     /// Returns `true` iff `self`, which is assumed to be a nice GFG-tNCW, is safe-minimal.
@@ -70,11 +75,24 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
             self.is_alpha_homogeneous(),
             "safe minimization requires an α-homogenous tNCW"
         );
+        let subsafe = self.subsafe_equivalence_relation();
+        self.safe_minimize_with(&subsafe);
+    }
+
+    /// Does the same as [`Self::safe_minimize`], but derives strong equivalence from the given
+    /// subsafe-equivalence relation `subsafe` (see [`Self::subsafe_equivalence_relation`]) instead
+    /// of computing it, e.g. from the one returned by [`Self::safe_centralize_with`].
+    pub(super) fn safe_minimize_with(
+        &mut self,
+        subsafe: &BTreeSet<(StateIndex<Self>, StateIndex<Self>)>,
+    ) {
+        debug_assert!(self.is_safe_deterministic());
+        debug_assert!(self.is_alpha_homogeneous());
 
         // the representative of `[q]` is its smallest state, and `(q, s)` with `s ≤ q` is
         // visited first, as the pairs are ordered lexicographically
         let mut representative: BTreeMap<_, _> = BTreeMap::new();
-        for (q, s) in self.strong_equivalence_relation() {
+        for (q, s) in strong_equivalence(subsafe) {
             representative.entry(q).or_insert(s);
         }
         self.initial = representative[&self.initial];

@@ -1,10 +1,11 @@
 //! Safe language containment, frontiers and safe centralization \[AK22, Section 3.2\].
+use super::determinize::LanguageClasses;
 use super::{CoBuchiCondition, NCW};
 use crate::core::{
     Color,
     alphabet::{Alphabet, Expression},
 };
-use crate::ts::{Shrinkable, Sproutable};
+use crate::ts::{Shrinkable, Sproutable, StateIndex};
 use crate::{Automaton, TransitionSystem};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -19,6 +20,23 @@ where
     /// `L_safe(A^q) ⊆ L_safe(A^s)`. Following \[AK22\], the safe language `L_safe(A^q)` is the set
     /// of infinite words that can be read from `q` without traversing an `α`-transition.
     pub fn safe_containment_relation(&self) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
+        let states: Vec<D::StateIndex> = self.state_indices().collect();
+        let pairs = states
+            .iter()
+            .flat_map(|&q| states.iter().map(move |&s| (q, s)))
+            .collect();
+        self.safe_containment_among(pairs)
+    }
+
+    /// Computes the pairs `(q, s)` among the `candidates` with `L_safe(A^q) ⊆ L_safe(A^s)`, where
+    /// `self` is assumed to be safe deterministic, see [`Self::safe_containment_relation`]. Pairs
+    /// that are no candidates are treated as not contained, so the result is exact if for every
+    /// candidate `(q, s)` and symbol `σ`, the safe `σ`-successors of `q` and `s` (if both exist)
+    /// form a candidate again.
+    fn safe_containment_among(
+        &self,
+        candidates: BTreeSet<(D::StateIndex, D::StateIndex)>,
+    ) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
         debug_assert!(self.is_safe_deterministic());
         let states: Vec<D::StateIndex> = self.state_indices().collect();
 
@@ -50,38 +68,32 @@ where
             live = still_live;
         }
 
-        // pairs `(q, s)` with `L_safe(A^q) ⊈ L_safe(A^s)` - via least fixpoint
-        let mut not_contained = BTreeSet::new();
+        // pairs `(q, s)` with `L_safe(A^q) ⊆ L_safe(A^s)` - via greatest fixpoint: a pair is
+        // refuted if some live safe `σ`-successor `p` of `q` is not matched by a safe
+        // `σ`-successor `r` of `s` with `(p, r)` still contained
+        let mut contained = candidates;
         loop {
-            let mut changed = false;
-            for &q in &states {
-                for &s in &states {
-                    if not_contained.contains(&(q, s)) {
-                        continue;
-                    }
-                    let witnessed = safe_successors[&q]
+            let refuted: Vec<_> = contained
+                .iter()
+                .copied()
+                .filter(|(q, s)| {
+                    safe_successors[q]
                         .iter()
                         .filter(|(_, p)| live.contains(p))
-                        .any(|(sym, &p)| match safe_successors[&s].get(sym) {
+                        .any(|(sym, &p)| match safe_successors[s].get(sym) {
                             None => true,
-                            Some(&r) => not_contained.contains(&(p, r)),
-                        });
-                    if witnessed {
-                        not_contained.insert((q, s));
-                        changed = true;
-                    }
-                }
-            }
-            if !changed {
+                            Some(&r) => !contained.contains(&(p, r)),
+                        })
+                })
+                .collect();
+            if refuted.is_empty() {
                 break;
             }
+            for pair in refuted {
+                contained.remove(&pair);
+            }
         }
-
-        states
-            .iter()
-            .flat_map(|&q| states.iter().map(move |&s| (q, s)))
-            .filter(|pair| !not_contained.contains(pair))
-            .collect()
+        contained
     }
 
     /// Computes the subsafe-equivalence relation between the states of `self`, which is assumed
@@ -90,10 +102,28 @@ where
     /// `(q, s)` iff `q ≤ s`.
     pub fn subsafe_equivalence_relation(&self) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
         let contained = self.gfg_containment_relation();
-        self.safe_containment_relation()
-            .into_iter()
-            .filter(|&(q, s)| contained.contains(&(q, s)) && contained.contains(&(s, q)))
-            .collect()
+        let classes = LanguageClasses::from_containment(&contained, self.state_indices());
+        self.subsafe_equivalence_relation_with(&classes)
+    }
+
+    /// Does the same as [`Self::subsafe_equivalence_relation`], but takes language equivalence
+    /// from the given partition `classes` instead of computing it.
+    ///
+    /// Safe containment is only computed between equivalent states: as `self` is semantically
+    /// deterministic, the `σ`-successors of equivalent states are equivalent again, so the safe
+    /// containment between equivalent states only depends on that between other equivalent
+    /// states.
+    pub(super) fn subsafe_equivalence_relation_with(
+        &self,
+        classes: &LanguageClasses<D::StateIndex>,
+    ) -> BTreeSet<(D::StateIndex, D::StateIndex)> {
+        let states: Vec<D::StateIndex> = self.state_indices().collect();
+        let candidates = states
+            .iter()
+            .flat_map(|&q| states.iter().map(move |&s| (q, s)))
+            .filter(|&(q, s)| classes.equivalent(q, s))
+            .collect();
+        self.safe_containment_among(candidates)
     }
 
     /// Returns the states of a frontier of `self`, which is assumed to be a nice GFG-tNCW, given
@@ -189,16 +219,27 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
             self.is_safe_deterministic(),
             "safe centralization requires a safe deterministic tNCW"
         );
-        // L(A^q) ⊆ L(A^s)
         let contained = self.gfg_containment_relation();
-        // L(A^q) = L(A^s)
-        let equivalent = |q, s| contained.contains(&(q, s)) && contained.contains(&(s, q));
+        let classes = LanguageClasses::from_containment(&contained, self.state_indices());
+        self.safe_centralize_with(&classes);
+    }
+
+    /// Does the same as [`Self::safe_centralize`], but takes language equivalence from the given
+    /// partition `classes` instead of computing it. Returns the subsafe-equivalence relation `≤`
+    /// of the result (see [`Self::subsafe_equivalence_relation`]), so that
+    /// [`Self::safe_minimize_with`] can reuse it.
+    ///
+    /// This is the subsafe-equivalence relation of `self` before safe centralization, restricted
+    /// to the kept states: their languages are unchanged \[AK22, Theorem 3.15\], and so are their
+    /// safe languages, as all their safe transitions are kept and stay within their safe
+    /// component, which is kept as a whole.
+    pub(super) fn safe_centralize_with(
+        &mut self,
+        classes: &LanguageClasses<StateIndex<Self>>,
+    ) -> BTreeSet<(StateIndex<Self>, StateIndex<Self>)> {
+        debug_assert!(self.is_safe_deterministic());
         // q ≤ s
-        let subsafe: BTreeSet<_> = self
-            .safe_containment_relation()
-            .into_iter()
-            .filter(|&(q, s)| equivalent(q, s))
-            .collect();
+        let mut subsafe = self.subsafe_equivalence_relation_with(classes);
         let kept = self.frontier_states(&subsafe);
 
         if !kept.contains(&self.initial) {
@@ -236,7 +277,7 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
                     .symbols()
                     .filter(|sym| !safe_symbols.contains(sym))
                 {
-                    for &p in kept.iter().filter(|&&p| equivalent(target, p)) {
+                    for &p in kept.iter().filter(|&&p| classes.equivalent(target, p)) {
                         let expression = self.alphabet().make_expression(sym);
                         centralized.insert((source, expression, true, p));
                     }
@@ -252,6 +293,9 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
         for q in removed {
             self.remove_state(q);
         }
+
+        subsafe.retain(|(q, s)| kept.contains(q) && kept.contains(s));
+        subsafe
     }
 }
 
