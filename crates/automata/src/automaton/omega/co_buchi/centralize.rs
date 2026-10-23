@@ -68,29 +68,56 @@ where
             live = still_live;
         }
 
+        // safe_predecessors[p][σ] are the states with a safe `σ`-transition to `p`
+        let mut safe_predecessors: BTreeMap<D::StateIndex, BTreeMap<A::Symbol, Vec<_>>> =
+            BTreeMap::new();
+        for (&q, successors) in &safe_successors {
+            for (&sym, &p) in successors {
+                safe_predecessors
+                    .entry(p)
+                    .or_default()
+                    .entry(sym)
+                    .or_default()
+                    .push(q);
+            }
+        }
+
         // pairs `(q, s)` with `L_safe(A^q) ⊆ L_safe(A^s)` - via greatest fixpoint: a pair is
         // refuted if some live safe `σ`-successor `p` of `q` is not matched by a safe
         // `σ`-successor `r` of `s` with `(p, r)` still contained
         let mut contained = candidates;
-        loop {
-            let refuted: Vec<_> = contained
-                .iter()
-                .copied()
-                .filter(|(q, s)| {
-                    safe_successors[q]
-                        .iter()
-                        .filter(|(_, p)| live.contains(p))
-                        .any(|(sym, &p)| match safe_successors[s].get(sym) {
-                            None => true,
-                            Some(&r) => !contained.contains(&(p, r)),
-                        })
-                })
-                .collect();
-            if refuted.is_empty() {
-                break;
-            }
-            for pair in refuted {
-                contained.remove(&pair);
+        let mut refuted: Vec<_> = contained
+            .iter()
+            .copied()
+            .filter(|(q, s)| {
+                safe_successors[q]
+                    .iter()
+                    .filter(|(_, p)| live.contains(p))
+                    .any(|(sym, &p)| match safe_successors[s].get(sym) {
+                        None => true,
+                        Some(&r) => !contained.contains(&(p, r)),
+                    })
+            })
+            .collect();
+        for pair in &refuted {
+            contained.remove(pair);
+        }
+        // a refuted pair `(p, r)` (where `p` is live, as it has a live safe successor) refutes
+        // every contained `(q, s)` with safe `σ`-transitions `q → p` and `s → r`
+        let empty = BTreeMap::new();
+        while let Some((p, r)) = refuted.pop() {
+            let predecessors_of_r = safe_predecessors.get(&r).unwrap_or(&empty);
+            for (sym, qs) in safe_predecessors.get(&p).unwrap_or(&empty) {
+                let Some(ss) = predecessors_of_r.get(sym) else {
+                    continue;
+                };
+                for &q in qs {
+                    for &s in ss {
+                        if contained.remove(&(q, s)) {
+                            refuted.push((q, s));
+                        }
+                    }
+                }
             }
         }
         contained
