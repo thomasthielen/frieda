@@ -28,13 +28,16 @@ const SAMPLES: u64 = 10;
 /// The seed of the first sample; sample `i` uses `SEED + i`.
 const SEED: u64 = 0;
 
-const STEPS: [&str; 6] = [
-    "safe-det check",
-    "sem. determinize",
-    "remove unreachable",
-    "normalize",
-    "safe centralize",
-    "safe minimize",
+/// The steps of `NCW::minimize`, each with whether its time is reported. The trivially fast
+/// steps are not reported, but still counted in the time of the pipeline without reuse, i.e. the
+/// sum of the times of all steps.
+const STEPS: [(&str, bool); 6] = [
+    ("safe-det check", false),
+    ("sem. determinize", true),
+    ("remove unreachable", false),
+    ("normalize", false),
+    ("safe centralize", true),
+    ("safe minimize", true),
 ];
 
 /// Times `f` applied to `ncw`.
@@ -90,8 +93,13 @@ fn main() {
     );
     let header: Vec<String> = ["size", "states", "edges", "min. states"]
         .into_iter()
-        .chain(STEPS)
-        .chain(["sum of steps", "pipeline"])
+        .chain(
+            STEPS
+                .into_iter()
+                .filter(|&(_, reported)| reported)
+                .map(|(name, _)| name),
+        )
+        .chain(["pipeline w/o reuse", "pipeline w/ reuse"])
         .map(String::from)
         .collect();
     // wide enough for the header and for values up to 7 digits
@@ -143,7 +151,13 @@ fn main() {
         let row: Vec<String> = [size.to_string(), average(states), average(edges)]
             .into_iter()
             .chain([average(minimal_states)])
-            .chain(step_times.into_iter().map(|times| millis(median(times))))
+            .chain(
+                step_times
+                    .into_iter()
+                    .zip(STEPS)
+                    .filter(|&(_, (_, reported))| reported)
+                    .map(|(times, _)| millis(median(times))),
+            )
             .chain([millis(median(sum_times)), millis(median(pipeline_times))])
             .collect();
         print_row(&row, &widths);
