@@ -2,15 +2,16 @@
 //! safe deterministic GFG-tNCWs, both for each step separately and for the complete pipeline.
 //!
 //! For every size, `SAMPLES` automata are drawn with `generate_random_ncw` (seeded, so runs are
-//! reproducible). Each automaton is minimized twice: once step by step, timing every step, and
-//! once with a single call of `NCW::minimize` on a fresh copy. Both results are checked to agree.
+//! reproducible). Each automaton is minimized once with `NCW::minimize_reporting`, which runs
+//! exactly the steps of `NCW::minimize`, including the reuse of results across steps, and reports
+//! the end of every step, so that each step and the complete pipeline can be timed in one run.
 //! The reported times are medians over the samples.
 //!
 //! Run in release mode, optionally passing the sizes to measure:
 //! cargo run --release --example minimization_benchmark -p automata -- 10 20 40
 
 use automata::TransitionSystem;
-use automata::automaton::NCW;
+use automata::automaton::{MinimizationStep as Step, NCW};
 use automata::random::generate_random_ncw;
 use rand::{SeedableRng, rngs::StdRng};
 use std::time::{Duration, Instant};
@@ -28,33 +29,41 @@ const SAMPLES: u64 = 10;
 /// The seed of the first sample; sample `i` uses `SEED + i`.
 const SEED: u64 = 0;
 
-/// The steps of `NCW::minimize`, each with whether its time is reported. The trivially fast
-/// steps are not reported, but still counted in the time of the pipeline without reuse, i.e. the
-/// sum of the times of all steps.
-const STEPS: [(&str, bool); 6] = [
-    ("safe-det check", false),
-    ("sem. determinize", true),
-    ("remove unreachable", false),
-    ("normalize", false),
-    ("safe centralize", true),
-    ("safe minimize", true),
+/// The steps of `NCW::minimize` in the order they are reported, each with its column title and
+/// whether its time is reported. The trivially fast steps are not reported, but still counted in
+/// the time of the complete pipeline.
+const STEPS: [(Step, &str, bool); 8] = [
+    (Step::SafeDeterminismCheck, "safe-det check", false),
+    (Step::ContainmentGame, "containment game", true),
+    (Step::SemanticDeterminization, "sem. determinize", true),
+    (Step::UnreachableRemoval, "remove unreachable", false),
+    (Step::Normalization, "normalize", false),
+    (Step::LanguageClasses, "language classes", false),
+    (Step::SafeCentralization, "safe centralize", true),
+    (Step::SafeMinimization, "safe minimize", true),
 ];
 
-/// Times `f` applied to `ncw`.
-fn time(ncw: &mut NCW, f: impl FnOnce(&mut NCW)) -> Duration {
+/// Minimizes `ncw`, returning the time of each step (in the order of `STEPS`) and of the
+/// complete pipeline.
+fn time_minimization(ncw: &mut NCW) -> (Vec<Duration>, Duration) {
+    let mut step_times = Vec::with_capacity(STEPS.len());
     let start = Instant::now();
-    f(ncw);
-    start.elapsed()
+    let mut step_start = start;
+    ncw.minimize_reporting(|step| {
+        let duration = step_start.elapsed();
+        assert_eq!(step, STEPS[step_times.len()].0, "unexpected order of steps");
+        step_times.push(duration);
+        // excludes the bookkeeping above from the time of the next step
+        step_start = Instant::now();
+    });
+    (step_times, start.elapsed())
 }
 
-/// Returns the transitions of `ncw` as a sorted list, for comparing results.
-fn sorted_transitions(ncw: &NCW) -> Vec<(u32, char, bool, u32)> {
-    let mut transitions: Vec<_> = ncw
-        .state_indices()
-        .flat_map(|q| ncw.transitions_from(q).collect::<Vec<_>>())
-        .collect();
-    transitions.sort();
-    transitions
+/// Returns the number of transitions of `ncw`.
+fn edge_count(ncw: &NCW) -> usize {
+    ncw.state_indices()
+        .map(|q| ncw.transitions_from(q).count())
+        .sum()
 }
 
 fn median(mut durations: Vec<Duration>) -> Duration {
@@ -96,10 +105,10 @@ fn main() {
         .chain(
             STEPS
                 .into_iter()
-                .filter(|&(_, reported)| reported)
-                .map(|(name, _)| name),
+                .filter(|&(_, _, reported)| reported)
+                .map(|(_, title, _)| title),
         )
-        .chain(["pipeline w/o reuse", "pipeline w/ reuse"])
+        .chain(["pipeline"])
         .map(String::from)
         .collect();
     // wide enough for the header and for values up to 7 digits
@@ -108,43 +117,22 @@ fn main() {
 
     for size in sizes {
         let mut step_times: Vec<Vec<Duration>> = vec![vec![]; STEPS.len()];
-        let mut sum_times = vec![];
         let mut pipeline_times = vec![];
         let (mut states, mut edges, mut minimal_states) = (0, 0, 0);
 
         for sample in 0..SAMPLES {
             let mut rng = StdRng::seed_from_u64(SEED + sample);
-            let input =
+            let mut ncw =
                 generate_random_ncw(SYMBOLS, size, ALPHA_PROBABILITY, NONDETERMINISM, &mut rng);
-            states += input.size();
-            edges += sorted_transitions(&input).len();
+            states += ncw.size();
+            edges += edge_count(&ncw);
 
-            // step by step, in the order of `NCW::minimize`
-            let mut ncw = input.clone();
-            let times = [
-                time(&mut ncw, |ncw| assert!(ncw.is_safe_deterministic())),
-                time(&mut ncw, |ncw| ncw.semantically_determinize()),
-                time(&mut ncw, |ncw| {
-                    ncw.remove_unreachable_states();
-                }),
-                time(&mut ncw, |ncw| ncw.normalize()),
-                time(&mut ncw, |ncw| ncw.safe_centralize()),
-                time(&mut ncw, |ncw| ncw.safe_minimize()),
-            ];
+            let (times, pipeline_time) = time_minimization(&mut ncw);
             for (step, duration) in times.into_iter().enumerate() {
                 step_times[step].push(duration);
             }
-            sum_times.push(times.iter().sum());
+            pipeline_times.push(pipeline_time);
             minimal_states += ncw.size();
-
-            // complete pipeline
-            let mut minimized = input.clone();
-            pipeline_times.push(time(&mut minimized, |ncw| ncw.minimize()));
-            assert_eq!(
-                sorted_transitions(&minimized),
-                sorted_transitions(&ncw),
-                "step-by-step and complete minimization disagree for size {size}, sample {sample}"
-            );
         }
 
         let average = |total: usize| format!("{:.1}", total as f64 / SAMPLES as f64);
@@ -155,10 +143,10 @@ fn main() {
                 step_times
                     .into_iter()
                     .zip(STEPS)
-                    .filter(|&(_, (_, reported))| reported)
+                    .filter(|&(_, (_, _, reported))| reported)
                     .map(|(times, _)| millis(median(times))),
             )
-            .chain([millis(median(sum_times)), millis(median(pipeline_times))])
+            .chain([millis(median(pipeline_times))])
             .collect();
         print_row(&row, &widths);
     }

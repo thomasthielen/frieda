@@ -140,18 +140,61 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
     /// # Panics
     /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]).
     pub fn minimize(&mut self) {
+        self.minimize_reporting(|_| {});
+    }
+
+    /// Does the same as [`Self::minimize`], but calls `finished` with each
+    /// [`MinimizationStep`] right after that step is done, e.g. for timing the individual steps
+    /// including the reuse of results across them.
+    ///
+    /// # Panics
+    /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]).
+    pub fn minimize_reporting(&mut self, mut finished: impl FnMut(MinimizationStep)) {
         assert!(
             self.is_safe_deterministic(),
             "minimization requires a safe deterministic tNCW"
         );
+        finished(MinimizationStep::SafeDeterminismCheck);
         let contained = self.gfg_containment_relation();
+        finished(MinimizationStep::ContainmentGame);
         self.semantically_determinize_with(&contained);
+        finished(MinimizationStep::SemanticDeterminization);
         self.remove_unreachable_states();
+        finished(MinimizationStep::UnreachableRemoval);
         self.normalize();
+        finished(MinimizationStep::Normalization);
         let classes = LanguageClasses::from_containment(&contained, self.state_indices());
+        finished(MinimizationStep::LanguageClasses);
         let subsafe = self.safe_centralize_with(&classes);
+        finished(MinimizationStep::SafeCentralization);
         self.safe_minimize_with(&subsafe);
+        finished(MinimizationStep::SafeMinimization);
     }
+}
+
+/// The steps of [`NCW::minimize`], in the order they are executed, as reported by
+/// [`NCW::minimize_reporting`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum MinimizationStep {
+    /// Checking that the input is safe deterministic.
+    SafeDeterminismCheck,
+    /// Solving the containment game once (see [`NCW::gfg_containment_relation`]), whose result
+    /// is reused by all later steps.
+    ContainmentGame,
+    /// Removing non-covering transitions (see [`NCW::semantically_determinize`]).
+    SemanticDeterminization,
+    /// Removing unreachable states (see [`NCW::remove_unreachable_states`]).
+    UnreachableRemoval,
+    /// Recoloring safe transitions between safe components (see [`NCW::normalize`]).
+    Normalization,
+    /// Partitioning the states into language-equivalent classes from the containment relation.
+    LanguageClasses,
+    /// Making the automaton safe-centralized (see [`NCW::safe_centralize`]), reusing the
+    /// language classes.
+    SafeCentralization,
+    /// Making the automaton safe-minimal (see [`NCW::safe_minimize`]), reusing the
+    /// subsafe-equivalence relation computed during safe centralization.
+    SafeMinimization,
 }
 
 /// This impl applies to both [`DCW`] and [`NCW`], as they are both instantiations of
