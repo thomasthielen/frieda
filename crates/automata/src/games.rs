@@ -42,8 +42,9 @@ impl Player {
 pub struct ParityGame {
     owner: Vec<Player>,
     priority: Vec<usize>,
-    successors: Vec<Vec<usize>>,
-    predecessors: Vec<Vec<usize>>,
+    // all edges `(source, target)`; kept as a flat list, as games with many vertices would
+    // otherwise need two small allocations per vertex, which dominated the construction time
+    edges: Vec<(usize, usize)>,
 }
 
 impl ParityGame {
@@ -61,27 +62,25 @@ impl ParityGame {
     pub fn add_vertex(&mut self, owner: Player, priority: usize) -> usize {
         self.owner.push(owner);
         self.priority.push(priority);
-        self.successors.push(Vec::new());
-        self.predecessors.push(Vec::new());
         self.owner.len() - 1
     }
 
     /// Adds an edge from `source` to `target`.
     pub fn add_edge(&mut self, source: usize, target: usize) {
-        self.successors[source].push(target);
-        self.predecessors[target].push(source);
+        self.edges.push((source, target));
     }
 
     /// Solves the game using Zielonka's recursive algorithm and returns, for every vertex, the
     /// [`Player`] who wins from it. Panics if some vertex has no successor.
     pub fn solve(&self) -> Vec<Player> {
+        let solver = Solver::new(self);
         assert!(
-            self.successors.iter().all(|s| !s.is_empty()),
+            (0..self.size()).all(|v| !solver.successors.of(v).is_empty()),
             "parity game arena must be total"
         );
         let mut winner = vec![Player::Even; self.size()];
         let all = vec![true; self.size()];
-        let (_, odd) = self.zielonka(&all);
+        let (_, odd) = solver.zielonka(&all);
         for (v, &is_odd) in odd.iter().enumerate() {
             if is_odd {
                 winner[v] = Player::Odd;
@@ -89,19 +88,73 @@ impl ParityGame {
         }
         winner
     }
+}
+
+/// The adjacency lists of all vertices of a [`ParityGame`], stored contiguously: the neighbors
+/// of `v` are `neighbors[start[v]..start[v + 1]]`.
+struct Adjacency {
+    start: Vec<usize>,
+    neighbors: Vec<usize>,
+}
+
+impl Adjacency {
+    /// Builds the adjacency lists of the vertices `0..size` from the given `(vertex, neighbor)`
+    /// pairs.
+    fn new(size: usize, pairs: impl Iterator<Item = (usize, usize)> + Clone) -> Self {
+        // first count the neighbors of each vertex, then let each list start where the
+        // previous one ends
+        let mut start = vec![0; size + 1];
+        for (v, _) in pairs.clone() {
+            start[v + 1] += 1;
+        }
+        for v in 0..size {
+            start[v + 1] += start[v];
+        }
+        let mut next = start.clone();
+        let mut neighbors = vec![0; start[size]];
+        for (v, w) in pairs {
+            neighbors[next[v]] = w;
+            next[v] += 1;
+        }
+        Self { start, neighbors }
+    }
+
+    /// Returns the neighbors of `v`.
+    fn of(&self, v: usize) -> &[usize] {
+        &self.neighbors[self.start[v]..self.start[v + 1]]
+    }
+}
+
+/// Zielonka's algorithm on a [`ParityGame`], whose edges are first turned into [`Adjacency`]
+/// lists for both directions.
+struct Solver<'a> {
+    game: &'a ParityGame,
+    successors: Adjacency,
+    predecessors: Adjacency,
+}
+
+impl<'a> Solver<'a> {
+    fn new(game: &'a ParityGame) -> Self {
+        let edges = game.edges.iter().copied();
+        Self {
+            game,
+            successors: Adjacency::new(game.size(), edges.clone()),
+            predecessors: Adjacency::new(game.size(), edges.map(|(v, w)| (w, v))),
+        }
+    }
 
     /// Solves the subgame induced by the vertices in `arena` (which must be a trap for both
     /// players, so that the subgame is again total) and returns the winning regions of
     /// [`Player::Even`] and [`Player::Odd`], in this order.
     fn zielonka(&self, arena: &[bool]) -> (Vec<bool>, Vec<bool>) {
-        let n = self.size();
-        let Some(max_priority) = (0..n).filter(|&v| arena[v]).map(|v| self.priority[v]).max()
-        else {
+        let n = self.game.size();
+        let priority = &self.game.priority;
+        let Some(max_priority) = (0..n).filter(|&v| arena[v]).map(|v| priority[v]).max() else {
             return (vec![false; n], vec![false; n]);
         };
         let player = Player::of_priority(max_priority);
         let target: Vec<bool> = (0..n)
-            .map(|v| arena[v] && self.priority[v] == max_priority)
+            .map(|v| arena[v] && priority[v] == max_priority)
             .collect();
         let attracted = self.attractor(arena, &target, player);
         let (sub_even, sub_odd) = self.zielonka(&difference(arena, &attracted));
@@ -131,20 +184,20 @@ impl ParityGame {
     /// Computes the attractor of `target` for `player` within the subgame induced by `arena`,
     /// i.e. the set of vertices from which `player` can force a visit to `target`.
     fn attractor(&self, arena: &[bool], target: &[bool], player: Player) -> Vec<bool> {
-        let n = self.size();
+        let n = self.game.size();
         let mut attracted = target.to_vec();
         // for vertices of the opponent: number of successors (within `arena`) that are not yet
         // attracted; such a vertex is attracted once this drops to zero
         let mut remaining: Vec<usize> = (0..n)
-            .map(|v| self.successors[v].iter().filter(|&&w| arena[w]).count())
+            .map(|v| self.successors.of(v).iter().filter(|&&w| arena[w]).count())
             .collect();
         let mut queue: Vec<usize> = (0..n).filter(|&v| attracted[v]).collect();
         while let Some(w) = queue.pop() {
-            for &v in &self.predecessors[w] {
+            for &v in self.predecessors.of(w) {
                 if !arena[v] || attracted[v] {
                     continue;
                 }
-                if self.owner[v] == player {
+                if self.game.owner[v] == player {
                     attracted[v] = true;
                     queue.push(v);
                 } else {
