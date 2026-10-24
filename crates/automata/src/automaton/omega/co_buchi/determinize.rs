@@ -7,7 +7,8 @@ use crate::core::{
 use crate::games::{ParityGame, Player};
 use crate::ts::{Shrinkable, Sproutable};
 use crate::{Automaton, TransitionSystem};
-use std::collections::{BTreeMap, BTreeSet, HashMap, btree_map::Entry};
+use rustc_hash::FxHashMap;
+use std::collections::{BTreeMap, BTreeSet, btree_map::Entry};
 use std::hash::Hash;
 
 impl<A, Q, D> Automaton<A, CoBuchiCondition, Q, bool, D, true, true>
@@ -52,7 +53,8 @@ where
         }
 
         // all `(is_α, p')` with `⟨p, a, p'⟩` in δ, where `None` is the implicit rejecting sink
-        let mut transitions: HashMap<(Option<D::StateIndex>, A::Symbol), Vec<_>> = HashMap::new();
+        let mut transitions: FxHashMap<(Option<D::StateIndex>, A::Symbol), Vec<_>> =
+            FxHashMap::default();
         for &q in &states {
             for (_, sym, color, target) in self.transitions_from(q) {
                 transitions
@@ -327,7 +329,7 @@ impl<S, L> Vertex<S, L> {
 /// new vertices), so that afterwards all reachable vertices and their edges are in `game`.
 struct Arena<S, L> {
     game: ParityGame,
-    index: HashMap<Vertex<S, L>, usize>,
+    index: FxHashMap<Vertex<S, L>, usize>,
     unexplored: Vec<(Vertex<S, L>, usize)>,
 }
 
@@ -335,7 +337,7 @@ impl<S: Copy + Eq + Hash, L: Copy + Eq + Hash> Arena<S, L> {
     fn new() -> Self {
         Self {
             game: ParityGame::new(),
-            index: HashMap::new(),
+            index: FxHashMap::default(),
             unexplored: Vec::new(),
         }
     }
