@@ -228,12 +228,12 @@ pub trait TransitionSystem: Sized {
     /// the same state with the same symbol.
     fn is_deterministic(&self) -> bool {
         for state in self.state_indices() {
-            for (l, r) in self
-                .edges_from(state)
-                .unwrap()
-                .zip(self.edges_from(state).unwrap().skip(1))
-            {
-                if self.alphabet().overlapping(l.expression(), r.expression()) {
+            let edges: Vec<_> = self.edges_from(state).unwrap().collect();
+            for (i, l) in edges.iter().enumerate() {
+                for r in &edges[i + 1..] {
+                    if !self.alphabet().overlapping(l.expression(), r.expression()) {
+                        continue;
+                    }
                     trace!(
                         "found overlapping edges from {:?}: on {} to {:?} and on {} to {:?}",
                         l.source(),
@@ -826,4 +826,18 @@ impl<P: Pointed> Pointed for &mut P {
 use self::operations::{ProvidesStateColor, WithStateColor};
 
 #[cfg(test)]
-mod tests {}
+mod tests {
+    use super::TransitionSystem;
+    use crate::ts::TSBuilder;
+    use automata_core::Void;
+
+    #[test]
+    fn is_deterministic_compares_all_pairs_of_edges() {
+        // the two `a`-edges of 0 are not adjacent in the edge list
+        let nts = TSBuilder::<Void, Void, true>::without_state_colors()
+            .with_edges([(0, 'a', Void, 0), (0, 'b', Void, 0), (0, 'a', Void, 1)])
+            .with_edges([(1, 'a', Void, 1)])
+            .into_nts();
+        assert!(!nts.is_deterministic());
+    }
+}
