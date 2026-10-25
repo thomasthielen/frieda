@@ -6,7 +6,7 @@ use super::{DCW, NCW};
 use crate::ts::{ForAlphabet, Sproutable};
 use crate::{NTS, Pointed, TransitionSystem};
 use automata_core::Void;
-use automata_core::alphabet::CharAlphabet;
+use automata_core::alphabet::{CharAlphabet, PropAlphabet, PropExpression};
 use std::collections::BTreeMap;
 
 /// AK22, Figure 1: the tDCW `A_fm` for "finitely many `b`s". Both states are strongly-equivalent
@@ -110,6 +110,23 @@ pub(super) fn safe_and_alpha_on_same_letter_ncw() -> NCW {
     NCW::builder()
         .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
         .into_ncw(0)
+}
+
+/// Builds a tNCW over the [`PropAlphabet`] with the single atomic proposition `x_0`, i.e. over
+/// two symbols, with states `0..states`. Unlike over a [`CharAlphabet`], the expression of an
+/// edge, given as a formula like `"x_0 | !x_0"`, may match several symbols.
+pub(super) fn prop_ncw(
+    states: u32,
+    edges: impl IntoIterator<Item = (u32, &'static str, bool, u32)>,
+) -> NCW<PropAlphabet> {
+    let mut ts = NTS::for_alphabet(PropAlphabet::from_apnames(["x_0"]));
+    for _ in 0..states {
+        ts.add_state(Void);
+    }
+    for (q, formula, color, p) in edges {
+        ts.add_edge((q, PropExpression::new(1, formula), color, p));
+    }
+    NCW::from_parts(ts, 0)
 }
 
 /// Returns `true` iff `L(a) = L(b)`, where all states of `a` and `b` are assumed to be GFG.

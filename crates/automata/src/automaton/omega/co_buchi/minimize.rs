@@ -4,7 +4,7 @@
 //! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
 use super::{CoBuchiCondition, NCW};
 use crate::core::{Color, alphabet::Alphabet};
-use crate::ts::{Shrinkable, Sproutable, StateIndex};
+use crate::ts::{Shrinkable, StateIndex};
 use crate::{Automaton, TransitionSystem};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -101,15 +101,14 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
         self.initial = representative[&self.initial];
 
         let states: Vec<_> = self.state_indices().collect();
-        let mut quotient: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
+        let mut quotient = vec![];
         for q in states {
             let edges = self
                 .remove_edges_from(q)
                 .expect("state was obtained from state_indices");
             let source = representative[&q];
-            let merged = quotient.entry(source).or_default();
             for (_, expression, color, target) in edges {
-                merged.insert((source, expression, color, representative[&target]));
+                quotient.push((source, expression, color, representative[&target]));
             }
         }
 
@@ -122,16 +121,14 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
             self.remove_state(q);
         }
 
-        for edge in quotient.into_values().flatten() {
-            self.add_edge(edge);
-        }
+        self.add_edges_without_duplicates(quotient);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::super::ak22_examples::{
-        AK22_FIGURE_4, ak22_figure_1, ak22_figure_2, safe_and_alpha_on_same_letter_ncw,
+        AK22_FIGURE_4, ak22_figure_1, ak22_figure_2, prop_ncw, safe_and_alpha_on_same_letter_ncw,
         sorted_transitions,
     };
     use super::super::{DCW, NCW};
@@ -247,6 +244,27 @@ mod tests {
         assert!(ncw.is_safe_minimal());
         assert!(ncw.is_alpha_homogeneous());
         assert!(ncw.try_into_dcw().is_err());
+    }
+
+    #[test]
+    fn safe_minimize_merges_overlapping_edges_of_merged_states() {
+        // the universal states 0 and 1 are strongly-equivalent and are merged into 0. Each reads
+        // both symbols safely into the other, 0 with a single edge and 1 with one edge per
+        // symbol, so the quotient must not get two safe transitions on the same symbol.
+        let mut ncw = prop_ncw(
+            2,
+            [
+                (0, "x_0 | !x_0", false, 1),
+                (1, "x_0", false, 0),
+                (1, "!x_0", false, 0),
+            ],
+        );
+        assert!(!ncw.is_safe_minimal());
+        ncw.safe_minimize();
+        assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0]);
+        assert_eq!(ncw.transitions_from(0).count(), 2);
+        assert!(ncw.is_safe_deterministic());
+        assert!(ncw.is_safe_minimal());
     }
 
     #[test]

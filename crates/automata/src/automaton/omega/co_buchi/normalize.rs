@@ -9,7 +9,7 @@ use super::CoBuchiCondition;
 use crate::core::{Color, alphabet::Alphabet};
 use crate::ts::{Shrinkable, Sproutable};
 use crate::{Automaton, TransitionSystem};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 impl<A, Q, D> Automaton<A, CoBuchiCondition, Q, bool, D, true, true>
 where
@@ -60,7 +60,7 @@ where
     /// GFG-tNCW, after [`Self::remove_empty_states`].
     ///
     /// If a recolored transition coincides with an `α`-transition that is already present, only
-    /// one copy of it is kept.
+    /// one copy of it is kept (see [`Self::add_edges_without_duplicates`]).
     pub fn normalize(&mut self)
     where
         D: Shrinkable + Sproutable,
@@ -71,24 +71,23 @@ where
             let edges = self
                 .remove_edges_from(q)
                 .expect("state was obtained from state_indices");
-            let normalized: BTreeSet<_> = edges
+            let normalized: Vec<_> = edges
                 .into_iter()
                 .map(|(source, expression, color, target)| {
                     let color = color || component[&source] != component[&target];
                     (source, expression, color, target)
                 })
                 .collect();
-            for edge in normalized {
-                self.add_edge(edge);
-            }
+            self.add_edges_without_duplicates(normalized);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::ak22_examples::{ak22_figure_2, sorted_transitions};
+    use super::super::ak22_examples::{ak22_figure_2, prop_ncw, sorted_transitions};
     use super::super::{DCW, NCW};
+    use crate::TransitionSystem;
 
     #[test]
     fn normalize_recolors_safe_transitions_between_safe_components() {
@@ -153,6 +152,28 @@ mod tests {
                 (2, 'a', false, 1),
                 (2, 'b', true, 2),
             ]
+        );
+    }
+
+    #[test]
+    fn normalize_merges_recolored_transition_into_overlapping_alpha_edge() {
+        // as above, but the recolored `⟨0, x_0, 1⟩` now coincides with only part of the existing
+        // `α`-edge `⟨0, x_0 | !x_0, 1⟩`, so there must be one transition per symbol afterwards
+        let mut ncw = prop_ncw(
+            2,
+            [
+                (0, "x_0", false, 1),
+                (0, "x_0 | !x_0", true, 1),
+                (1, "x_0 | !x_0", false, 1),
+            ],
+        );
+        assert!(!ncw.is_normal());
+        ncw.normalize();
+        assert!(ncw.is_normal());
+        assert_eq!(ncw.transitions_from(0).count(), 2);
+        assert!(
+            ncw.transitions_from(0)
+                .all(|(_, _, color, p)| color && p == 1)
         );
     }
 }

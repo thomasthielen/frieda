@@ -1,6 +1,9 @@
 use crate::automaton::Semantics;
-use crate::core::{Color, alphabet::Alphabet};
-use crate::ts::{Deterministic, Shrinkable, StateColor};
+use crate::core::{
+    Color,
+    alphabet::{Alphabet, Expression},
+};
+use crate::ts::{Deterministic, Shrinkable, Sproutable, StateColor};
 use crate::{
     Automaton, DTS, NTS, Pointed, TransitionSystem, automaton::InfiniteWordAutomaton, ts::run,
 };
@@ -333,6 +336,40 @@ where
                 )
             })
             .collect()
+    }
+
+    /// Adds the given `edges` to `self`, but adds each transition `⟨q, σ, c, p⟩` matched by them
+    /// only once, as the backing transition system keeps edges that match the same transition
+    /// apart. Edges whose expression only matches transitions that were not added before are
+    /// added as they are; otherwise, an edge is replaced by one edge for each symbol of a
+    /// transition that is new. Transitions that were already in `self` before are not taken
+    /// into account.
+    ///
+    /// This is needed whenever several edges are mapped to the same source, color and target,
+    /// whose expressions may overlap without being equal if they can match several symbols.
+    pub(super) fn add_edges_without_duplicates(
+        &mut self,
+        edges: impl IntoIterator<Item = (D::StateIndex, A::Expression, bool, D::StateIndex)>,
+    ) where
+        D: Sproutable,
+    {
+        let mut added = BTreeSet::new();
+        for (source, expression, color, target) in edges {
+            let symbols: Vec<A::Symbol> = expression.symbols().collect();
+            let new: Vec<A::Symbol> = symbols
+                .iter()
+                .copied()
+                .filter(|&sym| added.insert((source, sym, color, target)))
+                .collect();
+            if new.len() == symbols.len() {
+                self.add_edge((source, expression, color, target));
+                continue;
+            }
+            for sym in new {
+                let expression = self.alphabet().make_expression(sym);
+                self.add_edge((source, expression, color, target));
+            }
+        }
     }
 }
 
