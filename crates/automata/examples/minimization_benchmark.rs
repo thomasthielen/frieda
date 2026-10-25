@@ -36,11 +36,12 @@ const SEED: u64 = 0;
 /// The steps of `NCW::minimize` in the order they are reported, each with its column title and
 /// whether its time is reported. The trivially fast steps are not reported, but still counted in
 /// the time of the complete pipeline.
-const STEPS: [(Step, &str, bool); 8] = [
+const STEPS: [(Step, &str, bool); 9] = [
     (Step::SafeDeterminismCheck, "safe-det check", false),
     (Step::ContainmentGame, "containment game", true),
     (Step::SemanticDeterminization, "sem. determinize", true),
     (Step::UnreachableRemoval, "remove unreachable", false),
+    (Step::EmptyStateRemoval, "remove empty", false),
     (Step::Normalization, "normalize", false),
     (Step::LanguageClasses, "language classes", false),
     (Step::SafeCentralization, "safe centralize", true),

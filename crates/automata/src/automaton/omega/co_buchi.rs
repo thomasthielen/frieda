@@ -1,10 +1,12 @@
 use crate::automaton::Semantics;
 use crate::core::{Color, alphabet::Alphabet};
 use crate::ts::{Deterministic, Shrinkable, StateColor};
-use crate::{Automaton, DTS, NTS, TransitionSystem, automaton::InfiniteWordAutomaton, ts::run};
+use crate::{
+    Automaton, DTS, NTS, Pointed, TransitionSystem, automaton::InfiniteWordAutomaton, ts::run,
+};
 use automata_core::Void;
 use automata_core::alphabet::CharAlphabet;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 // The steps of the minimization pipeline of [AK22] are implemented as further inherent methods
 // on the co-Büchi automata below, one module per step.
@@ -128,8 +130,9 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
 
     /// Minimizes `self`, which is assumed to be a GFG-tNCW whose states are all GFG, by applying
     /// the steps of \[AK22\] in order:
-    /// 1. [`Self::semantically_determinize`] and [`Self::remove_unreachable_states`], followed by
-    ///    [`Self::normalize`], which make `self` nice \[AK22, Theorem 2.2\],
+    /// 1. [`Self::semantically_determinize`], [`Self::remove_unreachable_states`] and
+    ///    [`Self::remove_empty_states`], followed by [`Self::normalize`], which make `self` nice
+    ///    \[AK22, Theorem 2.2\],
     /// 2. [`Self::safe_centralize`], which makes it safe-centralized and `α`-homogenous
     ///    \[AK22, Theorem 3.15\],
     /// 3. [`Self::safe_minimize`], which makes it safe-minimal \[AK22, Theorem 3.20\].
@@ -137,6 +140,12 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
     /// Afterwards, `self` is a nice, safe-centralized and safe-minimal GFG-tNCW equivalent to the
     /// original one, and hence a minimal GFG-tNCW \[AK22, Theorem 3.6\]. The indices of the
     /// remaining states are unchanged.
+    ///
+    /// Missing transitions are treated as leading to an implicit rejecting sink, which is not
+    /// counted as a state \[AK22, Remark 3.7\]. Hence, the result has no state with an empty
+    /// language, unless `L(A) = ∅`, in which case it consists of the initial state only, without
+    /// any transitions. Explicit rejecting sinks of the input are removed, so the size of the
+    /// result only depends on the language.
     ///
     /// Unlike calling the steps one by one, the containment game (see
     /// [`Self::gfg_containment_relation`]) is solved only once, before step 1. All later steps
@@ -175,6 +184,8 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
         finished(MinimizationStep::SemanticDeterminization);
         self.remove_unreachable_states();
         finished(MinimizationStep::UnreachableRemoval);
+        self.remove_empty_states();
+        finished(MinimizationStep::EmptyStateRemoval);
         self.normalize();
         finished(MinimizationStep::Normalization);
         let classes = LanguageClasses::from_containment(&contained, self.state_indices());
@@ -199,6 +210,8 @@ pub enum MinimizationStep {
     SemanticDeterminization,
     /// Removing unreachable states (see [`NCW::remove_unreachable_states`]).
     UnreachableRemoval,
+    /// Removing states with an empty language (see [`NCW::remove_empty_states`]).
+    EmptyStateRemoval,
     /// Recoloring safe transitions between safe components (see [`NCW::normalize`]).
     Normalization,
     /// Partitioning the states into language-equivalent classes from the containment relation.
@@ -254,6 +267,72 @@ where
         D: Shrinkable,
     {
         self.trim()
+    }
+
+    /// Removes all states `q` of `self` with `L(A^q) = ∅`, together with all transitions leaving
+    /// or entering them, and returns the removed states with their colors. The indices of the
+    /// remaining states are unchanged. The initial state is never removed: if `L(A) = ∅`, it is
+    /// kept as the only state, without any transitions.
+    ///
+    /// Missing transitions are treated as leading to an implicit rejecting sink, which is not
+    /// counted as a state \[AK22, Remark 3.7\]. Removing the states with an empty language makes
+    /// `self` follow this convention, so that the size of a minimal GFG-tNCW does not depend on
+    /// whether its input contained an explicit rejecting sink.
+    ///
+    /// A run is accepting iff it eventually stays on a cycle of safe transitions, so `L(A^q)` is
+    /// nonempty iff `q` can reach such a cycle; this does not require `self` to be GFG. Removing
+    /// the other states affects neither the language nor the GFGness of any remaining state, and
+    /// it preserves the properties obtained by \[AK22, Theorem 2.2\]: only transitions disappear,
+    /// which keeps safe determinism and normality, and if some `σ`-successor of a state has an
+    /// empty language, then all of them have, so semantic determinism is kept as well. Also, no
+    /// state becomes unreachable, since a state that is only reachable via states with an empty
+    /// language has an empty language itself.
+    pub fn remove_empty_states(&mut self) -> Vec<(D::StateIndex, Q)>
+    where
+        D: Shrinkable,
+    {
+        // states on a cycle of safe transitions, from which nonempty is propagated backwards
+        let mut nonempty: BTreeSet<D::StateIndex> = self
+            .edge_color_restricted(false, false)
+            .sccs()
+            .sccs_iter()
+            .filter(|scc| scc.is_nontransient())
+            .flat_map(|scc| scc.iter().copied().collect::<Vec<_>>())
+            .collect();
+        let mut predecessors: BTreeMap<D::StateIndex, Vec<D::StateIndex>> = BTreeMap::new();
+        for q in self.state_indices() {
+            for (_, _, _, target) in self.transitions_from(q) {
+                predecessors.entry(target).or_default().push(q);
+            }
+        }
+        let mut stack: Vec<D::StateIndex> = nonempty.iter().copied().collect();
+        while let Some(p) = stack.pop() {
+            for &q in predecessors.get(&p).into_iter().flatten() {
+                if nonempty.insert(q) {
+                    stack.push(q);
+                }
+            }
+        }
+
+        let initial = self.initial();
+        if !nonempty.contains(&initial) {
+            self.remove_edges_from(initial)
+                .expect("the initial state exists");
+        }
+        let empty: Vec<D::StateIndex> = self
+            .state_indices()
+            .filter(|q| *q != initial && !nonempty.contains(q))
+            .collect();
+        empty
+            .into_iter()
+            .map(|q| {
+                (
+                    q,
+                    self.remove_state(q)
+                        .expect("state was obtained from state_indices"),
+                )
+            })
+            .collect()
     }
 }
 
@@ -352,6 +431,72 @@ mod tests {
                 (1, 'b', true, 0),
             ]
         );
+    }
+
+    #[test]
+    fn remove_empty_states_keeps_states_reaching_safe_cycles() {
+        // 1 and 2 never reach a safe cycle, while 3 reaches the safe cycle of 4 via an
+        // `α`-transition
+        let mut ncw = NCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (0, 'c', true, 3),
+                (1, 'a', true, 2),
+                (1, 'b', true, 1),
+                (2, 'a', true, 2),
+                (3, 'a', true, 4),
+                (4, 'a', false, 4),
+            ])
+            .into_ncw(0);
+        let mut removed: Vec<u32> = ncw
+            .remove_empty_states()
+            .into_iter()
+            .map(|(q, _)| q)
+            .collect();
+        removed.sort();
+        assert_eq!(removed, vec![1, 2]);
+        assert_eq!(
+            sorted_transitions(&ncw),
+            vec![
+                (0, 'a', false, 0),
+                (0, 'c', true, 3),
+                (3, 'a', true, 4),
+                (4, 'a', false, 4),
+            ]
+        );
+    }
+
+    #[test]
+    fn remove_empty_states_keeps_initial_state_of_empty_language() {
+        let mut ncw = NCW::builder()
+            .with_edges([(0, 'a', true, 0), (0, 'b', false, 1), (1, 'a', true, 0)])
+            .into_ncw(0);
+        assert_eq!(ncw.remove_empty_states(), vec![(1, Void)]);
+        assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0]);
+        assert!(sorted_transitions(&ncw).is_empty());
+    }
+
+    #[test]
+    fn minimize_ignores_explicit_rejecting_sink() {
+        // both accept `a^ω`, once with an explicit rejecting sink 1 and once with a missing
+        // `b`-transition, AK22, Remark 3.7
+        let with_sink = DCW::builder()
+            .with_edges([
+                (0, 'a', false, 0),
+                (0, 'b', true, 1),
+                (1, 'a', true, 1),
+                (1, 'b', true, 1),
+            ])
+            .into_dcw(0);
+        let without_sink = NCW::builder()
+            .with_edges([(0, 'a', false, 0), (1, 'b', true, 1)])
+            .into_ncw(0);
+        for mut ncw in [with_sink.into_ncw(), without_sink] {
+            ncw.minimize();
+            assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0]);
+            assert_eq!(sorted_transitions(&ncw), vec![(0, 'a', false, 0)]);
+        }
     }
 
     #[test]
@@ -461,6 +606,7 @@ mod tests {
             let mut stepwise = input.clone();
             stepwise.semantically_determinize();
             stepwise.remove_unreachable_states();
+            stepwise.remove_empty_states();
             stepwise.normalize();
             stepwise.safe_centralize();
             stepwise.safe_minimize();
@@ -469,6 +615,7 @@ mod tests {
             let contained = ncw.gfg_containment_relation();
             ncw.semantically_determinize_with(&contained);
             ncw.remove_unreachable_states();
+            ncw.remove_empty_states();
             ncw.normalize();
             let classes = LanguageClasses::from_containment(&contained, ncw.state_indices());
             assert_eq!(

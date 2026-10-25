@@ -57,7 +57,7 @@ where
     /// state are unchanged \[AK22, Theorem 2.2\]. As no transition or state is removed, and
     /// transitions only ever change from safe to `α`, reachability, safe determinism and
     /// semantic determinism are preserved as well. This is the last step towards a *nice*
-    /// GFG-tNCW, after [`Self::remove_unreachable_states`].
+    /// GFG-tNCW, after [`Self::remove_empty_states`].
     ///
     /// If a recolored transition coincides with an `α`-transition that is already present, only
     /// one copy of it is kept.
