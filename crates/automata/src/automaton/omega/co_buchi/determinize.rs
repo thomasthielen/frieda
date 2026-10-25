@@ -273,7 +273,15 @@ impl<S: Ord + Copy> LanguageClasses<S> {
     /// # Panics
     /// If `q` or `s` was not among the states the partition was built from.
     pub(super) fn equivalent(&self, q: S, s: S) -> bool {
-        self.0[&q] == self.0[&s]
+        self.class(q) == self.class(s)
+    }
+
+    /// Returns the smallest state of the class of `q`, which identifies the class.
+    ///
+    /// # Panics
+    /// If `q` was not among the states the partition was built from.
+    pub(super) fn class(&self, q: S) -> S {
+        self.0[&q]
     }
 }
 

@@ -178,25 +178,28 @@ where
             .map(|(q, s)| (component[q], component[s]))
             .collect();
 
-        // the smallest state of every safe component, used to pick a representative
+        // the smallest state of every safe component, used to pick a representative; the states
+        // are visited in ascending order, so the first one seen of a component is its smallest
         let mut smallest: BTreeMap<usize, D::StateIndex> = BTreeMap::new();
         for (&q, &c) in &component {
-            smallest
-                .entry(c)
-                .and_modify(|s| *s = (*s).min(q))
-                .or_insert(q);
+            smallest.entry(c).or_insert(q);
         }
 
-        let in_frontier = |c: usize| {
-            let related = || h.iter().filter(move |&&(s, _)| s == c).map(|&(_, t)| t);
-            // `c` lies in an ergodic SCC of `H` ...
-            related().all(|t| h.contains(&(t, c)))
-                // ... and is its representative
-                && related().all(|t| smallest[&c] <= smallest[&t])
-        };
+        // all `S'` with `H(S, S')`
+        let related = |c: usize| h.range((c, 0)..=(c, usize::MAX)).map(|&(_, t)| t);
+        let frontier: BTreeSet<usize> = smallest
+            .keys()
+            .copied()
+            .filter(|&c| {
+                // `c` lies in an ergodic SCC of `H` ...
+                related(c).all(|t| h.contains(&(t, c)))
+                    // ... and is its representative
+                    && related(c).all(|t| smallest[&c] <= smallest[&t])
+            })
+            .collect();
         component
             .into_iter()
-            .filter(|&(_, c)| in_frontier(c))
+            .filter(|(_, c)| frontier.contains(c))
             .map(|(q, _)| q)
             .collect()
     }
@@ -283,6 +286,12 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
                 );
         }
 
+        // the kept states of every language class, each of which has one [AK22, Lemma 3.8]
+        let mut kept_in_class: BTreeMap<_, Vec<_>> = BTreeMap::new();
+        for &p in &kept {
+            kept_in_class.entry(classes.class(p)).or_default().push(p);
+        }
+
         for &q in &kept {
             let edges = self
                 .remove_edges_from(q)
@@ -307,7 +316,7 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
                     .symbols()
                     .filter(|sym| !safe_symbols.contains(sym))
                 {
-                    for &p in kept.iter().filter(|&&p| classes.equivalent(target, p)) {
+                    for &p in &kept_in_class[&classes.class(target)] {
                         let expression = self.alphabet().make_expression(sym);
                         centralized.insert((source, expression, true, p));
                     }
