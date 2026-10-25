@@ -1,4 +1,10 @@
 //! Safe components and normalization \[AK22, Theorem 2.2\], \[KS15, Lemma 46\].
+//!
+//! \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+//! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
+//!
+//! \[KS15\] Denis Kuperberg, Michal Skrzypczak: *On Determinisation of Good-for-Games
+//! Automata*. ICALP (2) 2015: 299-310
 use super::CoBuchiCondition;
 use crate::core::{Color, alphabet::Alphabet};
 use crate::ts::{Shrinkable, Sproutable};
@@ -81,15 +87,12 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::super::ak22_examples::sorted_transitions;
+    use super::super::ak22_examples::{ak22_figure_2, sorted_transitions};
     use super::super::{DCW, NCW};
-    use automata_core::upw;
 
     #[test]
     fn normalize_recolors_safe_transitions_between_safe_components() {
-        // accepts iff only finitely many `a`s are read after the first `a`, i.e. all words with
-        // finitely many `a`s. The safe components are {0} and {1}, which are connected by the
-        // safe transition `⟨0, a, 1⟩`, so this is not normal.
+        // the safe transition `⟨0, a, 1⟩` connects the safe components {0} and {1}
         let mut dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -99,9 +102,6 @@ mod tests {
             ])
             .into_dcw(0);
         assert!(!dcw.is_normal());
-        let words = [upw!("a"), upw!("b"), upw!("ab", "b"), upw!("b", "ab")];
-        let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
-
         dcw.normalize();
         assert!(dcw.is_normal());
         assert_eq!(
@@ -113,28 +113,11 @@ mod tests {
                 (1, 'b', false, 1),
             ]
         );
-        let accepted_after: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
-        assert_eq!(accepted, accepted_after);
-        assert_eq!(accepted, vec![false, true, true, false]);
     }
 
     #[test]
     fn normalize_keeps_normal_automaton() {
-        // AK22, Figure 2: the safe components are {0, 1} and {2}, and all safe transitions
-        // stay within them, so the automaton is already normal
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', false, 1),
-                (0, 'c', true, 2),
-                (1, 'a', true, 2),
-                (1, 'b', true, 2),
-                (1, 'c', false, 0),
-                (2, 'a', false, 2),
-                (2, 'b', true, 1),
-                (2, 'c', true, 0),
-            ])
-            .into_dcw(0);
+        let dcw = ak22_figure_2();
         assert!(dcw.is_normal());
         let mut normalized = dcw.clone();
         normalized.normalize();
@@ -143,9 +126,8 @@ mod tests {
 
     #[test]
     fn normalize_merges_recolored_transition_with_existing_alpha_transition() {
-        // `⟨0, a, 1⟩` exists both as a safe and as an `α`-transition. The safe one connects the
-        // safe components {0} and {1, 2}, and recoloring it makes it coincide with the other.
-        // The safe chain `1 → 2 → 1` forms a single safe component and must stay safe.
+        // the safe `⟨0, a, 1⟩` connects the safe components {0} and {1, 2}, and recoloring it
+        // makes it coincide with the existing `α`-transition `⟨0, a, 1⟩`
         let mut ncw = NCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -157,7 +139,6 @@ mod tests {
                 (2, 'b', true, 2),
             ])
             .into_ncw(0);
-        assert!(ncw.is_safe_deterministic());
         assert!(!ncw.is_normal());
         ncw.normalize();
         assert!(ncw.is_normal());

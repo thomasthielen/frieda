@@ -1,4 +1,7 @@
 //! Safe language containment, frontiers and safe centralization \[AK22, Section 3.2\].
+//!
+//! \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+//! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
 use super::determinize::LanguageClasses;
 use super::{CoBuchiCondition, NCW};
 use crate::core::{
@@ -329,31 +332,17 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
 #[cfg(test)]
 mod tests {
     use super::super::ak22_examples::{
-        AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_2, sorted_transitions,
+        AK22_FIGURE_1, AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_1, ak22_figure_2,
+        not_safe_deterministic_ncw, safe_and_alpha_on_same_letter_ncw, sorted_transitions,
     };
     use super::super::{DCW, NCW};
-    use crate::{Pointed, TransitionSystem};
-    use automata_core::upw;
+    use crate::Pointed;
 
     #[test]
     fn safe_containment() {
-        // AK22, Example 3.1: the safe languages are `L_safe(q0) = (a + bc)^ω`,
-        // `L_safe(q1) = c · L_safe(q0)` and `L_safe(q2) = a^ω`, so apart from the reflexive
-        // pairs, only `L_safe(q2) ⊆ L_safe(q0)` holds
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', false, 1),
-                (0, 'c', true, 2),
-                (1, 'a', true, 2),
-                (1, 'b', true, 2),
-                (1, 'c', false, 0),
-                (2, 'a', false, 2),
-                (2, 'b', true, 1),
-                (2, 'c', true, 0),
-            ])
-            .into_dcw(0);
-        let contained = dcw.safe_containment_relation();
+        // AK22, Example 3.1: `L_safe(q0) = (a + bc)^ω`, `L_safe(q1) = c · L_safe(q0)` and
+        // `L_safe(q2) = a^ω`
+        let contained = ak22_figure_2().safe_containment_relation();
         assert_eq!(
             contained.into_iter().collect::<Vec<_>>(),
             vec![(0, 0), (1, 1), (2, 0), (2, 2)]
@@ -362,6 +351,7 @@ mod tests {
 
     #[test]
     fn safe_containment_with_empty_safe_languages() {
+        // 0 and 1 have empty safe languages, while that of 2 is `a^ω`
         let ncw = NCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -371,12 +361,10 @@ mod tests {
             ])
             .into_ncw(0);
         let contained = ncw.safe_containment_relation();
-        // states 0 and 1 have empty safe languages, so they are contained in all states
         for s in 0..3 {
             assert!(contained.contains(&(0, s)));
             assert!(contained.contains(&(1, s)));
         }
-        // state 2 has a nonempty safe language, so it is only contained in itself
         assert!(contained.contains(&(2, 2)));
         assert!(!contained.contains(&(2, 0)));
         assert!(!contained.contains(&(2, 1)));
@@ -384,8 +372,8 @@ mod tests {
 
     #[test]
     fn safe_containment_follows_runs_beyond_first_letter() {
-        // both 0 and 2 can read `a` safely, but after that, 0 can read `b` safely forever while
-        // 2 can only read `c`: the difference is only witnessed after the first letter
+        // after reading `a` safely, 0 can read `b` and `c` safely forever, while 2 can only
+        // read `c`
         let ncw = NCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -407,8 +395,7 @@ mod tests {
 
     #[test]
     fn simple_frontier_example() {
-        // AK22, Example 3.10: as all states are equivalent and `L_safe(q2) ⊆ L_safe(q0)`, we have
-        // `q2 ≤ q0`, so `H({q2}, {q0, q1})` and the single frontier is `{{q0, q1}}`
+        // AK22, Example 3.10: `q2 ≤ q0`, so `H({q2}, {q0, q1})` and the frontier is `{{q0, q1}}`
         let dcw = ak22_figure_2();
         let subsafe = dcw.subsafe_equivalence_relation();
         assert_eq!(
@@ -425,20 +412,11 @@ mod tests {
 
     #[test]
     fn frontier_picks_smallest_of_strongly_equivalent_components() {
-        // AK22, Figure 1: the tDCW `A_fm` for "finitely many `b`s". Both states are
-        // strongly-equivalent (safe language `a^ω`), but lie in different safe components
-        // `{q0}` and `{q1}`, which are hence related by `H` in both directions. Only one of them
-        // may be in the frontier, and the one with the smaller smallest state is taken.
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', true, 1),
-                (1, 'a', false, 1),
-                (1, 'b', true, 0),
-            ])
-            .into_dcw(0);
+        // AK22, Figure 1: `H` relates `{q0}` and `{q1}` in both directions, so only the
+        // component with the smaller state is kept
+        let dcw = ak22_figure_1();
+        assert!(!dcw.is_safe_centralized());
         let subsafe = dcw.subsafe_equivalence_relation();
-        // subsafe = {(0,0), (0,1), (1,0), (1,1)}
         assert_eq!(subsafe.len(), 4);
         assert_eq!(
             dcw.frontier_states(&subsafe)
@@ -450,8 +428,8 @@ mod tests {
 
     #[test]
     fn frontier_keeps_components_with_different_languages() {
-        // L(q1) is "finitely many `a`s", and L(q0) = a^ω + a^* b L(q1). The states are not
-        // equivalent, so `H` only relates each safe component to itself, and both are kept.
+        // L(q1) is "finitely many `a`s" and L(q0) = a^ω + a^* b L(q1), so `H` only relates each
+        // safe component to itself
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
@@ -460,7 +438,6 @@ mod tests {
                 (1, 'b', false, 1),
             ])
             .into_dcw(0);
-        assert!(dcw.is_normal());
         let subsafe = dcw.subsafe_equivalence_relation();
         assert_eq!(
             subsafe.iter().copied().collect::<Vec<_>>(),
@@ -472,31 +449,30 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![0, 1]
         );
-
-        // hence, safe centralization changes nothing
         let centralized = dcw.clone().into_safe_centralized();
         assert_eq!(sorted_transitions(&centralized), sorted_transitions(&dcw));
     }
 
     #[test]
     fn ak22_safe_centralization_example() {
-        // AK22, Example 3.10: the state q2 is removed, and every `α`-transition of q0 and q1
-        // that is not overruled by a safe transition on the same letter is redirected to both
-        // q0 and q1, as all states are equivalent
-        let mut ncw = NCW::builder().with_edges(AK22_FIGURE_2).into_ncw(0);
-        ncw.safe_centralize();
+        // AK22, Example 3.10: q2 is removed, and the `α`-transitions of q0 and q1 are
+        // redirected to both q0 and q1. The result is nondeterministic on `c`.
+        let dcw = ak22_figure_2();
+        assert!(!dcw.is_safe_centralized());
+        let ncw = dcw.into_safe_centralized();
         assert_eq!(ncw.initial(), 0);
-        assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0, 1]);
         assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
         assert!(ncw.is_safe_deterministic());
         assert!(ncw.is_semantically_deterministic());
         assert!(ncw.is_normal());
+        assert!(ncw.is_safe_centralized());
+        assert!(ncw.is_alpha_homogeneous());
+        assert!(ncw.try_into_dcw().is_err());
     }
 
     #[test]
     fn safe_centralize_moves_initial_state_out_of_removed_component() {
-        // same as `ak22_figure_2_safe_centralizes_to_figure_4`, but starting in q2, which is
-        // removed. As `q2 ≤ q0` but not `q2 ≤ q1`, the new initial state is q0.
+        // as `q2 ≤ q0` but not `q2 ≤ q1`, the new initial state is q0
         let mut ncw = NCW::builder().with_edges(AK22_FIGURE_2).into_ncw(2);
         ncw.safe_centralize();
         assert_eq!(ncw.initial(), 0);
@@ -505,23 +481,10 @@ mod tests {
 
     #[test]
     fn ak22_single_state_example() {
-        // AK22, Figure 1: only the safe component {q0} is kept, and the `α`-transition on `b` is
-        // redirected to q0 itself. The result happens to be deterministic, so it can be turned
-        // back into a `DCW`.
-        // Unlike in AK22, we start in q1: as {q1} is the removed component, this also checks that
-        // the initial state is moved to the strongly-equivalent q0.
+        // AK22, Figure 1, but starting in the removed q1, so the initial state is moved to q0
         let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', true, 1),
-                (1, 'a', false, 1),
-                (1, 'b', true, 0),
-            ])
-            .into_dcw(1);
-        let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
-        let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
-
-        let dcw = dcw
+            .with_edges(AK22_FIGURE_1)
+            .into_dcw(1)
             .into_safe_centralized()
             .try_into_dcw()
             .expect("the result is deterministic");
@@ -530,71 +493,18 @@ mod tests {
             sorted_transitions(&dcw),
             vec![(0, 'a', false, 0), (0, 'b', true, 0)]
         );
-        let accepted_after: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
-        assert_eq!(accepted, accepted_after);
-        assert_eq!(accepted, vec![true, false, true, false]);
-    }
-
-    #[test]
-    fn ak22_figure_2_as_dcw_safe_centralizes_to_nondeterministic_ncw() {
-        // AK22, Figure 2 is a tDCW, which is safe-centralized as a tNCW. The result `B_S` of
-        // Figure 4 has two `c`-transitions from q0, so it cannot be turned back into a `DCW`.
-        let ncw = ak22_figure_2().into_safe_centralized();
-        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
-        assert!(ncw.try_into_dcw().is_err());
+        assert!(dcw.is_safe_centralized());
     }
 
     #[test]
     #[should_panic(expected = "safe deterministic")]
     fn safe_centralize_panics_if_not_safe_deterministic() {
-        // same automaton as in `ncw_not_safe_deterministic_with_two_safe_transitions`
-        let mut ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', false, 2),
-                (1, 'a', false, 1),
-                (2, 'a', false, 2),
-            ])
-            .into_ncw(0);
-        ncw.safe_centralize();
+        not_safe_deterministic_ncw().safe_centralize();
     }
 
     #[test]
-    fn safe_centralization_checks_on_ak22_figures() {
-        // AK22, Example 3.1: Figure 2 is not safe-centralized, as `q2 ≤ q0` but they are in
-        // different safe components. Being deterministic, it is trivially `α`-homogenous.
-        let mut ncw = ak22_figure_2().into_ncw();
-        assert!(!ncw.is_safe_centralized());
-        assert!(ncw.is_alpha_homogeneous());
-        ncw.safe_centralize();
-        assert!(ncw.is_safe_centralized());
-        assert!(ncw.is_alpha_homogeneous());
-
-        // AK22, Example 3.1: Figure 1 is not safe-centralized, as its two states are
-        // strongly-equivalent but in different safe components
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', true, 1),
-                (1, 'a', false, 1),
-                (1, 'b', true, 0),
-            ])
-            .into_dcw(0);
-        assert!(!dcw.is_safe_centralized());
-        let ncw = dcw.into_safe_centralized();
-        assert!(ncw.is_safe_centralized());
-        assert!(ncw.is_alpha_homogeneous());
-    }
-
-    #[test]
-    fn not_alpha_homogeneous_with_safe_and_alpha_transition_on_same_letter() {
-        // same automaton as in `ncw_safe_deterministic_despite_nondeterminism_on_alpha_transitions`:
-        // state 0 has both a safe and an `α`-transition on `a`
-        let ncw = NCW::builder()
-            .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
-            .into_ncw(0);
-        assert!(!ncw.is_alpha_homogeneous());
-
+    fn alpha_homogeneous() {
+        assert!(!safe_and_alpha_on_same_letter_ncw().is_alpha_homogeneous());
         // several `α`-transitions on the same letter are fine
         let ncw = NCW::builder().with_edges(AK22_FIGURE_4).into_ncw(0);
         assert!(ncw.is_alpha_homogeneous());

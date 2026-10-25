@@ -1,5 +1,6 @@
-//! Measures the running time of the minimization pipeline of AK22 (see `NCW::minimize`) on random
-//! safe deterministic GFG-tNCWs, both for each step separately and for the complete pipeline.
+//! Measures the running time of the minimization pipeline of \[AK22\] (see `NCW::minimize`) on
+//! random safe deterministic GFG-tNCWs, both for each step separately and for the complete
+//! pipeline.
 //!
 //! For every size, `SAMPLES` automata are drawn with `generate_random_ncw` (seeded, so runs are
 //! reproducible). Each automaton is minimized once with `NCW::minimize_reporting`, which runs
@@ -9,6 +10,9 @@
 //!
 //! Run in release mode, optionally passing the sizes to measure:
 //! cargo run --release --example minimization_benchmark -p automata -- 10 20 40
+//!
+//! \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+//! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
 
 use automata::TransitionSystem;
 use automata::automaton::{MinimizationStep as Step, NCW};

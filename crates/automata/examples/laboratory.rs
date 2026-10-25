@@ -1,6 +1,9 @@
 //! Laboratory: a general testing environment for experimenting with the library (e.g. the
 //! minimization algorithm). Rendered automata are written as PNGs to `examples/graphs/`.
 //! Run with: cargo run --example laboratory -p automata --features graphviz
+//!
+//! \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+//! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
 
 use automata::automaton::{DCW, NCW};
 use automata::core::Void;
@@ -129,7 +132,7 @@ fn sorted_transitions(
     transitions
 }
 
-/// An example in which every step of the minimization pipeline of AK22 has an effect.
+/// An example in which every step of the minimization pipeline of \[AK22\] has an effect.
 ///
 /// The language over {a, b, c} is "eventually, every `b` is immediately followed by an `a`",
 /// i.e. the factors `bb` and `bc` (the *violations*) occur only finitely often. It is

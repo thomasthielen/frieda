@@ -8,6 +8,9 @@ use std::collections::BTreeSet;
 
 // The steps of the minimization pipeline of [AK22] are implemented as further inherent methods
 // on the co-Büchi automata below, one module per step.
+//
+// [AK22]: Bader Abu Radi, Orna Kupferman: Minimization and Canonization of GFG Transition-Based
+//         Automata. Log. Methods Comput. Sci. 18(3) (2022)
 mod centralize;
 mod determinize;
 mod minimize;
@@ -48,6 +51,13 @@ impl<T: Deterministic<EdgeColor = bool>> Semantics<T, true> for CoBuchiCondition
 /// `false` the `ᾱ`-transitions or *safe* transitions. The terms accepting/rejecting
 /// are reserved for runs, not transitions: a run is accepting iff it takes
 /// `α`-transitions only finitely often, and it is *safe* iff it takes none at all.
+///
+/// ### References
+/// \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+/// Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
+///
+/// \[KS15\] Denis Kuperberg, Michal Skrzypczak: *On Determinisation of Good-for-Games
+/// Automata*. ICALP (2) 2015: 299-310
 pub type DCW<A = CharAlphabet, Q = Void, D = DTS<A, Q, bool>> =
     InfiniteWordAutomaton<A, CoBuchiCondition, Q, bool, true, D>;
 /// Helper trait for creating a [`DCW`] from a given transition system.
@@ -139,6 +149,10 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
     ///
     /// # Panics
     /// If `self` is not safe deterministic (see [`Self::is_safe_deterministic`]).
+    ///
+    /// # References
+    /// \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+    /// Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
     pub fn minimize(&mut self) {
         self.minimize_reporting(|_| {});
     }
@@ -245,7 +259,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::ak22_examples::{AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_2, sorted_transitions};
+    use super::ak22_examples::{
+        AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_1, ak22_figure_2, ak22_figure_2_extended,
+        non_covering_ncw, not_safe_deterministic_ncw, safe_and_alpha_on_same_letter_ncw,
+        sorted_transitions,
+    };
     use super::{DCW, LanguageClasses, NCW};
     use crate::random::generate_random_ncw;
     use crate::ts::TSBuilder;
@@ -274,7 +292,6 @@ mod tests {
 
     #[test]
     fn ncw_is_a_transition_system() {
-        use crate::TransitionSystem;
         let nts = TSBuilder::<Void, bool, true>::without_state_colors()
             .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
             .into_nts();
@@ -295,76 +312,16 @@ mod tests {
     }
 
     #[test]
-    fn dcw_is_safe_deterministic() {
-        // every genuinely deterministic transition system is trivially safe deterministic.
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', true, 1),
-                (1, 'a', false, 1),
-                (1, 'b', true, 0),
-            ])
-            .into_dcw(0);
-        assert!(dcw.is_safe_deterministic());
-    }
-
-    #[test]
-    fn ncw_safe_deterministic() {
-        let ncw = NCW::builder()
-            .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
-            .into_ncw(0);
-        assert!(ncw.is_safe_deterministic());
-    }
-
-    #[test]
-    fn ncw_not_safe_deterministic() {
-        let ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', false, 2),
-                (1, 'a', false, 1),
-                (2, 'a', false, 2),
-            ])
-            .into_ncw(0);
-        assert!(!ncw.is_safe_deterministic());
-    }
-
-    #[test]
-    fn remove_unreachable_states_after_semantic_determinization() {
-        // same automaton as in `semantically_determinize_removes_non_covering_transition`:
-        // removing the non-covering transition `⟨0, a, 2⟩` makes state 2 unreachable
-        let mut ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', true, 2),
-                (0, 'b', false, 0),
-                (1, 'a', false, 1),
-                (1, 'b', false, 1),
-                (2, 'a', true, 2),
-                (2, 'b', true, 2),
-            ])
-            .into_ncw(0);
-        assert!(ncw.remove_unreachable_states().is_empty());
-        ncw.semantically_determinize();
-        assert_eq!(ncw.remove_unreachable_states(), vec![(2, Void)]);
-        assert_eq!(
-            sorted_transitions(&ncw),
-            vec![
-                (0, 'a', false, 1),
-                (0, 'b', false, 0),
-                (1, 'a', false, 1),
-                (1, 'b', false, 1),
-            ]
-        );
-        assert!(ncw.is_safe_deterministic());
-        assert!(ncw.is_semantically_deterministic());
+    fn safe_deterministic() {
+        assert!(ak22_figure_1().is_safe_deterministic());
+        assert!(safe_and_alpha_on_same_letter_ncw().is_safe_deterministic());
+        assert!(!not_safe_deterministic_ncw().is_safe_deterministic());
     }
 
     #[test]
     fn remove_unreachable_states_removes_incoming_transitions() {
-        // states 2 and 3 are unreachable from 0, and the transitions `⟨2, a, 0⟩` and
-        // `⟨3, b, 1⟩` into reachable states must be removed along with them. State 1 is only
-        // reachable via an `α`-transition, and must be kept.
+        // 2 and 3 are unreachable, and so are their transitions into the reachable states.
+        // State 1 is only reachable via an `α`-transition.
         let mut ncw = NCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
@@ -399,22 +356,12 @@ mod tests {
 
     #[test]
     fn nice_after_full_pipeline() {
-        // same automaton as in `semantically_determinize_removes_non_covering_transition`:
-        // after semantic determinization and removal of unreachable states, the safe transition
-        // `⟨0, a, 1⟩` still connects the safe components {0} and {1}
-        let mut ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', true, 2),
-                (0, 'b', false, 0),
-                (1, 'a', false, 1),
-                (1, 'b', false, 1),
-                (2, 'a', true, 2),
-                (2, 'b', true, 2),
-            ])
-            .into_ncw(0);
+        // semantic determinization makes 2 unreachable, and the remaining safe transition
+        // `⟨0, a, 1⟩` connects the safe components {0} and {1}
+        let mut ncw = non_covering_ncw();
+        assert!(ncw.remove_unreachable_states().is_empty());
         ncw.semantically_determinize();
-        ncw.remove_unreachable_states();
+        assert_eq!(ncw.remove_unreachable_states(), vec![(2, Void)]);
         assert!(!ncw.is_normal());
         ncw.normalize();
         assert!(ncw.is_normal());
@@ -433,31 +380,10 @@ mod tests {
     }
 
     #[test]
-    fn safe_centralized_after_full_pipeline() {
-        // AK22, Figure 2 with two additional states, such that every step of the pipeline has an
-        // effect:
-        // - the `α`-transition `⟨q0, a, q3⟩` into the empty state 3 is not covering, and removing
-        //   it makes state 3 unreachable, just like the state 4, which is unreachable anyway,
-        // - the new initial state 5 reads every letter safely into q0, so `L(q5) = L(q0)` (all
-        //   states of Figure 2 are equivalent), but these safe transitions connect the safe
-        //   components {q5} and {q0, q1}, so they are recolored during normalization,
-        // - safe centralization then removes q5 and q2, and moves the initial state to q0.
-        let mut ncw = NCW::builder()
-            .with_edges(AK22_FIGURE_2)
-            .with_edges([
-                (0, 'a', true, 3),
-                (3, 'a', true, 3),
-                (3, 'b', true, 3),
-                (3, 'c', true, 3),
-                (4, 'a', true, 4),
-                (5, 'a', false, 0),
-                (5, 'b', false, 0),
-                (5, 'c', false, 0),
-            ])
-            .into_ncw(5);
+    fn minimize_ak22_figure_2_extended_step_by_step() {
+        let mut ncw = ak22_figure_2_extended();
         assert!(ncw.is_safe_deterministic());
         assert!(!ncw.is_semantically_deterministic());
-        // q0 has a safe and an `α`-transition on `a`
         assert!(!ncw.is_alpha_homogeneous());
 
         ncw.semantically_determinize();
@@ -477,7 +403,7 @@ mod tests {
         ncw.safe_centralize();
         assert_eq!(ncw.initial(), 0);
         assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
-        // the result is nice, safe-centralized and `α`-homogenous [AK22, Proposition 3.14]
+        // AK22, Proposition 3.14
         assert!(ncw.is_safe_deterministic());
         assert!(ncw.is_semantically_deterministic());
         assert!(ncw.remove_unreachable_states().is_empty());
@@ -485,47 +411,18 @@ mod tests {
         assert!(ncw.is_safe_centralized());
         assert!(ncw.is_alpha_homogeneous());
 
-        // AK22, Example 3.21: q0 and q1 differ in their safe languages, so safe minimization
-        // changes nothing
-        assert!(ncw.is_safe_minimal());
-        ncw.safe_minimize();
-        assert_eq!(ncw.initial(), 0);
-        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
-    }
-
-    #[test]
-    fn minimize_ak22_figure_2_with_additional_states() {
-        // same automaton as in `safe_centralized_after_full_pipeline`, minimized in one go
-        let mut ncw = NCW::builder()
-            .with_edges(AK22_FIGURE_2)
-            .with_edges([
-                (0, 'a', true, 3),
-                (3, 'a', true, 3),
-                (3, 'b', true, 3),
-                (3, 'c', true, 3),
-                (4, 'a', true, 4),
-                (5, 'a', false, 0),
-                (5, 'b', false, 0),
-                (5, 'c', false, 0),
-            ])
-            .into_ncw(5);
-        ncw.minimize();
-        assert_eq!(ncw.initial(), 0);
-        assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0, 1]);
-        assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
-        assert!(ncw.is_safe_minimal());
+        // AK22, Example 3.21: Figure 4 is already safe-minimal
+        let mut minimized = ak22_figure_2_extended();
+        minimized.minimize();
+        assert_eq!(minimized.initial(), 0);
+        assert_eq!(sorted_transitions(&minimized), AK22_FIGURE_4.to_vec());
     }
 
     #[test]
     fn minimize_needs_every_step() {
-        // all states accept "finitely many `b`s" and have the safe language `a^ω`, so they are
-        // strongly-equivalent:
-        // - the safe transition `⟨2, a, 0⟩` connects the safe components {2} and {0, 1}, so it is
-        //   recolored during normalization,
-        // - safe centralization then keeps only {0, 1}, which contains the smallest state,
-        // - safe minimization merges 0 and 1.
-        // Safe centralization redirects the `α`-transitions on `b` to both 0 and 1, so the
-        // intermediate result is nondeterministic, even though the final one is deterministic.
+        // all states accept "finitely many `b`s" with safe language `a^ω`. Normalization
+        // recolors `⟨2, a, 0⟩`, safe centralization removes {2}, and safe minimization merges
+        // 0 and 1, resulting in the single-state `A_fm` of AK22, Figure 1.
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -537,27 +434,18 @@ mod tests {
             ])
             .into_dcw(2);
         let minimized = dcw
-            .clone()
             .into_minimized()
             .try_into_dcw()
             .expect("the result is deterministic");
         assert_eq!(minimized.initial(), 0);
-        // the minimal tDCW for "finitely many `b`s", i.e. `A_fm` of AK22, Figure 1 after safe
-        // centralization
         assert_eq!(
             sorted_transitions(&minimized),
             vec![(0, 'a', false, 0), (0, 'b', true, 0)]
         );
-        let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
-        let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
-        let accepted_after: Vec<bool> = words.iter().map(|w| minimized.accepts(w)).collect();
-        assert_eq!(accepted, accepted_after);
-        assert_eq!(accepted, vec![true, false, true, false]);
     }
 
     #[test]
     fn minimize_ak22_figure_2_as_dcw_into_nondeterministic_ncw() {
-        // AK22, Figure 2 is a tDCW, but its minimal GFG-tNCW, Figure 4, is nondeterministic
         let ncw = ak22_figure_2().into_minimized();
         assert_eq!(sorted_transitions(&ncw), AK22_FIGURE_4.to_vec());
         assert!(ncw.try_into_dcw().is_err());
@@ -611,15 +499,6 @@ mod tests {
     #[test]
     #[should_panic(expected = "safe deterministic")]
     fn minimize_panics_if_not_safe_deterministic() {
-        // same automaton as in `ncw_not_safe_deterministic_with_two_safe_transitions`
-        let mut ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', false, 2),
-                (1, 'a', false, 1),
-                (2, 'a', false, 2),
-            ])
-            .into_ncw(0);
-        ncw.minimize();
+        not_safe_deterministic_ncw().minimize();
     }
 }

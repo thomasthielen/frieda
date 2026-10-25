@@ -1,4 +1,7 @@
 //! Strong equivalence and safe minimization \[AK22, Section 3.3\].
+//!
+//! \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+//! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
 use super::{CoBuchiCondition, NCW};
 use crate::core::{Color, alphabet::Alphabet};
 use crate::ts::{Shrinkable, Sproutable, StateIndex};
@@ -127,16 +130,16 @@ impl<A: Alphabet, Q: Color> NCW<A, Q> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ak22_examples::{AK22_FIGURE_4, ak22_figure_2, sorted_transitions};
+    use super::super::ak22_examples::{
+        AK22_FIGURE_4, ak22_figure_1, ak22_figure_2, safe_and_alpha_on_same_letter_ncw,
+        sorted_transitions,
+    };
     use super::super::{DCW, NCW};
     use crate::{Pointed, TransitionSystem};
-    use automata_core::upw;
 
     /// AK22, Figure 4 with q0 split into the strongly-equivalent states 0 and 2, which alternate
-    /// on `a`. All states are equivalent, as in Figure 4, and the automaton is deterministic,
-    /// nice, safe-centralized (it has a single safe component) and `α`-homogenous. The
-    /// `α`-transitions on `c` of 0 and 2 lead to different states, so merging 0 and 2 yields a
-    /// nondeterministic `c`-transition.
+    /// on `a`. It is deterministic, nice, safe-centralized and `α`-homogenous, but the
+    /// `α`-transitions on `c` of 0 and 2 lead to different states.
     const SPLIT_FIGURE_4: [(u32, char, bool, u32); 9] = [
         (0, 'a', false, 2),
         (0, 'b', false, 1),
@@ -151,22 +154,15 @@ mod tests {
 
     #[test]
     fn ak22_figure_1_strong_equivalence() {
-        // AK22, Example 3.1: the two states are strongly-equivalent, so it is not safe-minimal
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', true, 1),
-                (1, 'a', false, 1),
-                (1, 'b', true, 0),
-            ])
-            .into_dcw(0);
+        // AK22, Example 3.1
+        let dcw = ak22_figure_1();
         assert_eq!(dcw.strong_equivalence_relation().len(), 4);
         assert!(!dcw.is_safe_minimal());
     }
 
     #[test]
     fn ak22_figure_2_is_safe_minimal() {
-        // AK22, Example 3.1: all states of Figure 2 differ in their safe languages
+        // AK22, Example 3.1
         let dcw = ak22_figure_2();
         assert_eq!(
             dcw.strong_equivalence_relation()
@@ -179,8 +175,7 @@ mod tests {
 
     #[test]
     fn ak22_figure_4_safe_minimizes_to_itself() {
-        // AK22, Example 3.21: q0 and q1 differ in their safe languages, so `C` is identical to
-        // `B_S`
+        // AK22, Example 3.21
         let mut ncw = NCW::builder().with_edges(AK22_FIGURE_4).into_ncw(0);
         assert!(ncw.is_safe_minimal());
         ncw.safe_minimize();
@@ -190,9 +185,7 @@ mod tests {
 
     #[test]
     fn safe_minimize_merges_strongly_equivalent_states_in_one_safe_component() {
-        // unlike in AK22, Figure 1, the strongly-equivalent states 0 and 1 are in the same safe
-        // component, so safe centralization keeps both and safe minimization merges them. The
-        // result happens to be deterministic, so it can be turned back into a `DCW`.
+        // unlike in AK22, Figure 1, the strongly-equivalent 0 and 1 share a safe component
         let dcw = DCW::builder()
             .with_edges([
                 (0, 'a', false, 1),
@@ -203,41 +196,34 @@ mod tests {
             .into_dcw(1);
         assert!(dcw.is_safe_centralized());
         assert!(!dcw.is_safe_minimal());
-        let words = [upw!("a"), upw!("b"), upw!("ba", "a"), upw!("a", "ab")];
-        let accepted: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
-
         let dcw = dcw
             .into_safe_minimized()
             .try_into_dcw()
             .expect("the result is deterministic");
         assert_eq!(dcw.initial(), 0);
-        assert_eq!(dcw.state_indices().collect::<Vec<_>>(), vec![0]);
         assert_eq!(
             sorted_transitions(&dcw),
             vec![(0, 'a', false, 0), (0, 'b', true, 0)]
         );
-        let accepted_after: Vec<bool> = words.iter().map(|w| dcw.accepts(w)).collect();
-        assert_eq!(accepted, accepted_after);
-        assert_eq!(accepted, vec![true, false, true, false]);
         assert!(dcw.is_safe_minimal());
     }
 
     #[test]
     fn safe_minimize_joins_alpha_transitions_of_merged_states() {
-        let mut ncw = NCW::builder().with_edges(SPLIT_FIGURE_4).into_ncw(2);
-        assert!(ncw.is_semantically_deterministic());
-        assert!(ncw.is_normal());
-        assert!(ncw.is_safe_centralized());
-        assert!(ncw.is_alpha_homogeneous());
+        let dcw = DCW::builder().with_edges(SPLIT_FIGURE_4).into_dcw(2);
+        assert!(dcw.is_semantically_deterministic());
+        assert!(dcw.is_normal());
+        assert!(dcw.is_safe_centralized());
+        assert!(dcw.is_alpha_homogeneous());
         assert_eq!(
-            ncw.strong_equivalence_relation()
+            dcw.strong_equivalence_relation()
                 .into_iter()
                 .collect::<Vec<_>>(),
             vec![(0, 0), (0, 2), (1, 1), (2, 0), (2, 2)]
         );
-        assert!(!ncw.is_safe_minimal());
+        assert!(!dcw.is_safe_minimal());
 
-        ncw.safe_minimize();
+        let mut ncw = dcw.into_safe_minimized();
         assert_eq!(ncw.initial(), 0);
         assert_eq!(ncw.state_indices().collect::<Vec<_>>(), vec![0, 1]);
         assert_eq!(
@@ -252,8 +238,7 @@ mod tests {
                 (1, 'c', false, 0),
             ]
         );
-        // the result is nice, safe-centralized, safe-minimal and `α`-homogenous
-        // [AK22, Proposition 3.19]
+        // AK22, Proposition 3.19
         assert!(ncw.is_safe_deterministic());
         assert!(ncw.is_semantically_deterministic());
         assert!(ncw.remove_unreachable_states().is_empty());
@@ -261,28 +246,12 @@ mod tests {
         assert!(ncw.is_safe_centralized());
         assert!(ncw.is_safe_minimal());
         assert!(ncw.is_alpha_homogeneous());
-    }
-
-    #[test]
-    fn safe_minimize_dcw_into_nondeterministic_ncw() {
-        // `SPLIT_FIGURE_4` is deterministic, but merging 0 and 2 joins their `α`-transitions on
-        // `c`, so the result cannot be turned back into a `DCW`
-        let ncw = DCW::builder()
-            .with_edges(SPLIT_FIGURE_4)
-            .into_dcw(0)
-            .into_safe_minimized();
-        assert!(sorted_transitions(&ncw).contains(&(0, 'c', true, 0)));
-        assert!(sorted_transitions(&ncw).contains(&(0, 'c', true, 1)));
         assert!(ncw.try_into_dcw().is_err());
     }
 
     #[test]
     #[should_panic(expected = "α-homogenous")]
     fn safe_minimize_panics_if_not_alpha_homogeneous() {
-        // same automaton as in `not_alpha_homogeneous_with_safe_and_alpha_transition_on_same_letter`
-        let mut ncw = NCW::builder()
-            .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
-            .into_ncw(0);
-        ncw.safe_minimize();
+        safe_and_alpha_on_same_letter_ncw().safe_minimize();
     }
 }

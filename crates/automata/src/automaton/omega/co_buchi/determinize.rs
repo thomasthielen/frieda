@@ -1,4 +1,10 @@
 //! Language containment between states and semantic determinization \[AK22, Theorem 2.2\].
+//!
+//! \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
+//! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
+//!
+//! \[KS15\] Denis Kuperberg, Michal Skrzypczak: *On Determinisation of Good-for-Games
+//! Automata*. ICALP (2) 2015: 299-310
 use super::CoBuchiCondition;
 use crate::core::{
     Color,
@@ -362,15 +368,16 @@ impl<S: Copy + Eq + Hash, L: Copy + Eq + Hash> Arena<S, L> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::ak22_examples::sorted_transitions;
-    use super::super::{DCW, NCW};
+    use super::super::NCW;
+    use super::super::ak22_examples::{
+        AK22_FIGURE_4, ak22_figure_1, ak22_figure_2, non_covering_ncw, sorted_transitions,
+    };
     use crate::TransitionSystem;
 
     #[test]
     fn gfg_containment_relation_of_simple_languages() {
-        // state 0: universal (safe loops), state 1: empty (`α`-loops),
-        // state 2: finitely many `a`s, state 3: empty, as it only has an `α`-loop on `a` and
-        // no `b`-transition at all (exercising the implicit rejecting sink)
+        // 0 is universal, 1 is empty, 2 accepts "finitely many `a`s", and 3 is empty via the
+        // implicit rejecting sink on `b`
         let ncw = NCW::builder()
             .with_edges([
                 (0, 'a', false, 0),
@@ -384,14 +391,11 @@ mod tests {
             .into_ncw(0);
         let contained = ncw.gfg_containment_relation();
         for q in 0..4 {
-            // every language contains itself and the empty languages
             assert!(contained.contains(&(q, q)));
             assert!(contained.contains(&(1, q)));
             assert!(contained.contains(&(3, q)));
-            // the universal language contains everything
             assert!(contained.contains(&(q, 0)));
         }
-        assert!(contained.contains(&(1, 3)) && contained.contains(&(3, 1)));
         assert!(!contained.contains(&(0, 2)));
         assert!(!contained.contains(&(0, 1)));
         assert!(!contained.contains(&(2, 1)));
@@ -400,71 +404,29 @@ mod tests {
 
     #[test]
     fn ak22_figure_2_states_are_equivalent() {
-        // AK22, Example 3.1: all states of the tDCW in Figure 2 are equivalent
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', false, 1),
-                (0, 'c', true, 2),
-                (1, 'a', true, 2),
-                (1, 'b', true, 2),
-                (1, 'c', false, 0),
-                (2, 'a', false, 2),
-                (2, 'b', true, 1),
-                (2, 'c', true, 0),
-            ])
-            .into_dcw(0);
-        let contained = dcw.gfg_containment_relation();
-        assert_eq!(contained.len(), 9);
+        // AK22, Example 3.1
+        let dcw = ak22_figure_2();
+        assert_eq!(dcw.gfg_containment_relation().len(), 9);
         assert!(dcw.is_semantically_deterministic());
     }
 
     #[test]
-    fn ak22_figure_4_is_semantically_deterministic() {
-        // AK22, Figure 4: the tNCW `B_S` for `S = {{q0, q1}}`, whose nondeterminism is on
-        // `α`-transitions only, and whose states are all equivalent
-        let ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', false, 1),
-                (1, 'c', false, 0),
-                (0, 'c', true, 0),
-                (0, 'c', true, 1),
-                (1, 'a', true, 1),
-                (1, 'b', true, 1),
-                (1, 'a', true, 0),
-                (1, 'b', true, 0),
-            ])
-            .into_ncw(0);
-        assert_eq!(ncw.gfg_containment_relation().len(), 4);
-        assert!(ncw.is_semantically_deterministic());
+    fn semantically_determinize_dcw_is_identity() {
+        let dcw = ak22_figure_1();
+        assert!(dcw.is_semantically_deterministic());
+        let mut determinized = dcw.clone();
+        determinized.semantically_determinize();
+        assert_eq!(sorted_transitions(&determinized), sorted_transitions(&dcw));
     }
 
     #[test]
-    fn ncw_not_semantically_deterministic() {
-        // state 0 has two `a`-successors: state 1 (universal) via a safe transition and
-        // state 2 (empty) via an `α`-transition. The automaton is GFG (always move to 1) and
-        // safe deterministic, but not semantically deterministic.
-        let ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', true, 2),
-                (0, 'b', false, 0),
-                (1, 'a', false, 1),
-                (1, 'b', false, 1),
-                (2, 'a', true, 2),
-                (2, 'b', true, 2),
-            ])
-            .into_ncw(0);
-        assert!(ncw.is_safe_deterministic());
-        assert!(!ncw.is_semantically_deterministic());
-    }
-
-    #[test]
-    fn ncw_semantically_deterministic_with_structurally_different_successors() {
-        // state 0 has two `a`-successors, 1 and 2, which both recognize "finitely many `a`s"
-        // but in structurally different ways: 1 is a single state, while 2 and 3 alternate.
-        let ncw = NCW::builder()
+    fn semantically_determinize_keeps_equivalent_successors() {
+        // all nondeterministic choices lead to equivalent states, so every transition is
+        // covering: in AK22, Figure 4 all states are equivalent, and in the second automaton,
+        // 1 and 2 both accept "finitely many `a`s", but in structurally different ways
+        let figure_4 = NCW::builder().with_edges(AK22_FIGURE_4).into_ncw(0);
+        assert_eq!(figure_4.gfg_containment_relation().len(), 4);
+        let structurally_different = NCW::builder()
             .with_edges([
                 (0, 'a', true, 1),
                 (0, 'a', true, 2),
@@ -477,38 +439,21 @@ mod tests {
                 (3, 'b', false, 3),
             ])
             .into_ncw(0);
-        assert!(ncw.is_semantically_deterministic());
-    }
-
-    #[test]
-    fn dcw_is_semantically_deterministic() {
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', true, 1),
-                (1, 'a', false, 1),
-                (1, 'b', true, 0),
-            ])
-            .into_dcw(0);
-        assert!(dcw.is_semantically_deterministic());
+        for ncw in [figure_4, structurally_different] {
+            assert!(ncw.is_semantically_deterministic());
+            let mut determinized = ncw.clone();
+            determinized.semantically_determinize();
+            assert_eq!(sorted_transitions(&determinized), sorted_transitions(&ncw));
+        }
     }
 
     #[test]
     fn semantically_determinize_removes_non_covering_transition() {
-        // same automaton as in `ncw_not_semantically_deterministic`: the `α`-transition
-        // `⟨0, a, 2⟩` leads to the empty state 2 and is not covering, as `L(1) ⊈ L(2)`
-        let mut ncw = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 1),
-                (0, 'a', true, 2),
-                (0, 'b', false, 0),
-                (1, 'a', false, 1),
-                (1, 'b', false, 1),
-                (2, 'a', true, 2),
-                (2, 'b', true, 2),
-            ])
-            .into_ncw(0);
+        let mut ncw = non_covering_ncw();
+        assert!(ncw.is_safe_deterministic());
+        assert!(!ncw.is_semantically_deterministic());
         ncw.semantically_determinize();
+        assert!(ncw.is_semantically_deterministic());
         assert_eq!(
             sorted_transitions(&ncw),
             vec![
@@ -520,14 +465,12 @@ mod tests {
                 (2, 'b', true, 2),
             ]
         );
-        assert!(ncw.is_safe_deterministic());
-        assert!(ncw.is_semantically_deterministic());
     }
 
     #[test]
     fn semantically_determinize_keeps_greatest_successor() {
-        // state 0 has three `a`-successors: 1 (finitely many `a`s), 2 (universal) and 3
-        // (empty). Only the transition to 2 is covering, as `L(3) ⊊ L(1) ⊊ L(2)`.
+        // 0 reads `a` into 1 (finitely many `a`s), 2 (universal) and 3 (empty), and only the
+        // transition to 2 is covering, as `L(3) ⊊ L(1) ⊊ L(2)`
         let mut ncw = NCW::builder()
             .with_edges([
                 (0, 'a', true, 1),
@@ -543,63 +486,9 @@ mod tests {
             ])
             .into_ncw(0);
         ncw.semantically_determinize();
-        let from_0: Vec<_> = ncw.transitions_from(0).collect();
-        assert_eq!(from_0.len(), 2);
-        assert!(from_0.contains(&(0, 'a', true, 2)));
-        assert!(from_0.contains(&(0, 'b', false, 0)));
+        let mut from_0: Vec<_> = ncw.transitions_from(0).collect();
+        from_0.sort();
+        assert_eq!(from_0, vec![(0, 'a', true, 2), (0, 'b', false, 0)]);
         assert!(ncw.is_semantically_deterministic());
-    }
-
-    #[test]
-    fn semantically_determinize_keeps_equivalent_successors() {
-        // `ak22_figure_4_is_semantically_deterministic` and
-        // `ncw_semantically_deterministic_with_structurally_different_successors`: all
-        // nondeterministic choices lead to equivalent states, so every transition is covering
-        let figure_4 = NCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', false, 1),
-                (1, 'c', false, 0),
-                (0, 'c', true, 0),
-                (0, 'c', true, 1),
-                (1, 'a', true, 1),
-                (1, 'b', true, 1),
-                (1, 'a', true, 0),
-                (1, 'b', true, 0),
-            ])
-            .into_ncw(0);
-        let structurally_different = NCW::builder()
-            .with_edges([
-                (0, 'a', true, 1),
-                (0, 'a', true, 2),
-                (0, 'b', false, 0),
-                (1, 'a', true, 1),
-                (1, 'b', false, 1),
-                (2, 'a', true, 3),
-                (2, 'b', false, 2),
-                (3, 'a', true, 2),
-                (3, 'b', false, 3),
-            ])
-            .into_ncw(0);
-        for ncw in [figure_4, structurally_different] {
-            let mut determinized = ncw.clone();
-            determinized.semantically_determinize();
-            assert_eq!(sorted_transitions(&determinized), sorted_transitions(&ncw));
-        }
-    }
-
-    #[test]
-    fn semantically_determinize_dcw_is_identity() {
-        let dcw = DCW::builder()
-            .with_edges([
-                (0, 'a', false, 0),
-                (0, 'b', true, 1),
-                (1, 'a', false, 1),
-                (1, 'b', true, 0),
-            ])
-            .into_dcw(0);
-        let mut determinized = dcw.clone();
-        determinized.semantically_determinize();
-        assert_eq!(sorted_transitions(&determinized), sorted_transitions(&dcw));
     }
 }
