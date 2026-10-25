@@ -3,8 +3,11 @@
 //! \[AK22\] Bader Abu Radi, Orna Kupferman: *Minimization and Canonization of GFG
 //! Transition-Based Automata*. Log. Methods Comput. Sci. 18(3) (2022)
 use super::{DCW, NCW};
-use crate::TransitionSystem;
+use crate::ts::{ForAlphabet, Sproutable};
+use crate::{NTS, Pointed, TransitionSystem};
+use automata_core::Void;
 use automata_core::alphabet::CharAlphabet;
+use std::collections::BTreeMap;
 
 /// AK22, Figure 1: the tDCW `A_fm` for "finitely many `b`s". Both states are strongly-equivalent
 /// with safe language `a^ω`, but lie in different safe components `{q0}` and `{q1}`.
@@ -107,6 +110,29 @@ pub(super) fn safe_and_alpha_on_same_letter_ncw() -> NCW {
     NCW::builder()
         .with_edges([(0, 'a', true, 0), (0, 'a', false, 1), (1, 'a', false, 1)])
         .into_ncw(0)
+}
+
+/// Returns `true` iff `L(a) = L(b)`, where all states of `a` and `b` are assumed to be GFG.
+///
+/// Both are copied into a single tNCW, in which the states of `a` come first and those of `b`
+/// follow, and the containment between the two initial states is decided in both directions with
+/// [`NCW::gfg_containment_relation`], which is exact as all states are GFG.
+pub(super) fn language_equivalent(a: &NCW, b: &NCW) -> bool {
+    let mut union = NTS::for_alphabet(a.alphabet().clone());
+    let mut index = BTreeMap::new();
+    for (side, ncw) in [(0, a), (1, b)] {
+        for q in ncw.state_indices() {
+            index.insert((side, q), union.add_state(Void));
+        }
+    }
+    for (side, ncw) in [(0, a), (1, b)] {
+        for (q, sym, color, p) in sorted_transitions(ncw) {
+            union.add_edge((index[&(side, q)], sym, color, index[&(side, p)]));
+        }
+    }
+    let (q, s) = (index[&(0, a.initial())], index[&(1, b.initial())]);
+    let contained = NCW::from_parts(union, q).gfg_containment_relation();
+    contained.contains(&(q, s)) && contained.contains(&(s, q))
 }
 
 /// Returns the transitions of `ncw` as a sorted list, for comparing against expectations.

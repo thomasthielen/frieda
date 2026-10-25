@@ -340,11 +340,11 @@ where
 mod tests {
     use super::ak22_examples::{
         AK22_FIGURE_2, AK22_FIGURE_4, ak22_figure_1, ak22_figure_2, ak22_figure_2_extended,
-        non_covering_ncw, not_safe_deterministic_ncw, safe_and_alpha_on_same_letter_ncw,
-        sorted_transitions,
+        language_equivalent, non_covering_ncw, not_safe_deterministic_ncw,
+        safe_and_alpha_on_same_letter_ncw, sorted_transitions,
     };
     use super::{DCW, LanguageClasses, NCW};
-    use crate::random::generate_random_ncw;
+    use crate::random::{generate_random_dcw, generate_random_ncw};
     use crate::ts::TSBuilder;
     use crate::{Pointed, TransitionSystem};
     use automata_core::{Void, upw};
@@ -641,6 +641,60 @@ mod tests {
             minimized.minimize();
             assert_eq!(sorted_transitions(&minimized), sorted_transitions(&ncw));
         }
+    }
+
+    #[test]
+    fn minimize_preserves_language() {
+        // random GFG-tNCWs and tDCWs, the latter over three letters and with so many
+        // `α`-transitions that 12 of them contain states with an empty language. The result
+        // has the language of the input, has the properties of AK22, Theorem 3.20, and cannot
+        // be minimized further.
+        for seed in 0..30 {
+            let rng = &mut StdRng::seed_from_u64(seed);
+            for input in [
+                generate_random_ncw(2, 10, 0.3, 0.5, rng),
+                generate_random_dcw(3, 8, 0.8, rng).into_ncw(),
+            ] {
+                let mut minimized = input.clone();
+                minimized.minimize();
+                assert!(
+                    language_equivalent(&input, &minimized),
+                    "language changed for seed {seed}"
+                );
+                assert!(minimized.is_safe_deterministic());
+                assert!(minimized.is_semantically_deterministic());
+                assert!(minimized.is_normal());
+                assert!(minimized.is_safe_centralized());
+                assert!(minimized.is_safe_minimal());
+                assert!(minimized.is_alpha_homogeneous());
+
+                let mut again = minimized.clone();
+                again.minimize();
+                assert_eq!(
+                    sorted_transitions(&again),
+                    sorted_transitions(&minimized),
+                    "minimizing again changed the result for seed {seed}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn language_equivalent_detects_different_languages() {
+        // the helper used by `minimize_preserves_language` must not accept everything: `a^ω`
+        // and "finitely many `b`s" differ, and so do `a^ω` and the empty language
+        let a_omega = NCW::builder()
+            .with_edges([(0, 'a', false, 0), (0, 'b', true, 1), (1, 'b', true, 1)])
+            .into_ncw(0);
+        let empty = NCW::builder()
+            .with_edges([(0, 'a', true, 0), (0, 'b', true, 0)])
+            .into_ncw(0);
+        let finitely_many_b = ak22_figure_1().into_ncw();
+        assert!(language_equivalent(&a_omega, &a_omega));
+        assert!(language_equivalent(&finitely_many_b, &finitely_many_b));
+        assert!(!language_equivalent(&a_omega, &finitely_many_b));
+        assert!(!language_equivalent(&finitely_many_b, &a_omega));
+        assert!(!language_equivalent(&a_omega, &empty));
     }
 
     #[test]
